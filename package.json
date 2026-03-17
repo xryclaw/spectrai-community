@@ -1,21 +1,23 @@
 {
-  "name": "spectrai",
+  "name": "spectrai0",
   "version": "0.4.6",
   "description": "SpectrAI - Multi Claude Code Session Orchestration Platform",
   "main": "./out/main/index.js",
   "author": "weibin <bin.wei@steriguard.cn>",
   "license": "MIT",
   "scripts": {
-    "dev": "electron-vite dev",
+    "dev": "npm run ensure:electron && electron-vite dev",
     "build": "electron-vite build",
     "build:win": "electron-vite build && electron-builder --win --dir",
-    "build:mac": "electron-vite build && npm run rebuild && electron-builder --mac --dir",
+    "build:mac": "electron-vite build && npm run rebuild && npm run prepare:mac-output && electron-builder --mac --dir",
     "dist": "node scripts/dist-win.mjs",
     "dist:safe": "node scripts/dist-win.mjs release-new --publish-latest",
-    "dist:mac": "electron-vite build && npm run rebuild && electron-builder --mac",
+    "dist:mac": "electron-vite build && npm run rebuild && npm run prepare:mac-output && electron-builder --mac",
     "preview": "electron-vite preview",
-    "postinstall": "electron-builder install-app-deps || echo postinstall skipped",
-    "rebuild": "npx @electron/rebuild -f -w node-pty better-sqlite3",
+    "ensure:electron": "node scripts/ensure-electron.mjs",
+    "prepare:mac-output": "node scripts/prepare-mac-output.mjs",
+    "postinstall": "npm run ensure:electron && electron-builder install-app-deps || echo postinstall skipped",
+    "rebuild": "npm run ensure:electron && npx @electron/rebuild -f -w node-pty better-sqlite3",
     "rebuild:sqlite": "npx @electron/rebuild -f -w better-sqlite3",
     "lint": "eslint . --ext .ts,.tsx",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
@@ -59,8 +61,9 @@
     "zustand": "^4.5.5"
   },
   "build": {
-    "appId": "com.weibin.spectrai",
-    "productName": "SpectrAI",
+    "appId": "com.weibin.spectrai0",
+    "productName": "SpectrAI0",
+    "executableName": "SpectrAI0",
     "directories": {
       "output": "release"
     },

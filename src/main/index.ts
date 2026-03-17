@@ -6,7 +6,7 @@
 
 // ★ 必须最先导入，激活 electron-log 并重定向 console.*
 import './logger'
-import { app, BrowserWindow, ipcMain, Menu } from 'electron'
+import { app, BrowserWindow, ipcMain, Menu, screen } from 'electron'
 import type { MenuItemConstructorOptions } from 'electron'
 import { join } from 'path'
 import { readFileSync, writeFileSync, existsSync } from 'fs'
@@ -44,6 +44,21 @@ import { UpdateManager } from './update/UpdateManager'
 
 let mainWindow: BrowserWindow | null = null
 let isQuitting = false
+
+function resolveAgentBridgePort(): number {
+  const envPort = parseInt(process.env.SPECTRAI_AGENT_BRIDGE_PORT || '', 10)
+  if (Number.isFinite(envPort) && envPort > 0) return envPort
+
+  const appName = app.getName().toLowerCase()
+  return appName.includes('spectrai0') ? 63821 : 63721
+}
+
+const AGENT_BRIDGE_PORT = resolveAgentBridgePort()
+
+if (app.isPackaged && process.env.NODE_OPTIONS) {
+  console.warn('[startup] clearing NODE_OPTIONS for packaged app compatibility')
+  delete process.env.NODE_OPTIONS
+}
 
 /**
  * 唤起主窗口（用于启动兜底、托盘唤起、二次启动激活）
@@ -144,14 +159,20 @@ function createWindow(): void {
   let startupShown = false
   let startupFallbackTimer: ReturnType<typeof setTimeout> | null = null
 
+  const hasSavedPosition = typeof winState.x === 'number' && typeof winState.y === 'number'
+  const isSavedPositionVisible = hasSavedPosition && screen.getAllDisplays().some((display) => {
+    const { x, y, width, height } = display.workArea
+    return winState.x! >= x && winState.x! < x + width && winState.y! >= y && winState.y! < y + height
+  })
+
   const windowOptions: Electron.BrowserWindowConstructorOptions = {
     width: winState.width,
     height: winState.height,
-    x: winState.x,
-    y: winState.y,
+    x: isSavedPositionVisible ? winState.x : undefined,
+    y: isSavedPositionVisible ? winState.y : undefined,
     minWidth: 1000,
     minHeight: 600,
-    show: false,
+    show: app.isPackaged,
     titleBarStyle: supportsTitleBarOverlay ? 'hidden' : 'hiddenInset',
     backgroundColor: '#0D1117',
     webPreferences: {
@@ -185,7 +206,16 @@ function createWindow(): void {
   }
 
   mainWindow.on('ready-to-show', ensureStartupVisible)
-  mainWindow.webContents.once('did-finish-load', ensureStartupVisible)
+  mainWindow.webContents.once('did-finish-load', () => {
+    console.log('[window] did-finish-load')
+    ensureStartupVisible()
+  })
+  mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription) => {
+    console.error(`[window] did-fail-load: ${errorCode} ${errorDescription}`)
+  })
+  mainWindow.on('unresponsive', () => {
+    console.error('[window] main window became unresponsive')
+  })
   startupFallbackTimer = setTimeout(ensureStartupVisible, 2000)
 
   // 监听 resize / move，防抖保存窗口状态
@@ -208,6 +238,25 @@ function createWindow(): void {
     mainWindow = null
   })
 
+  // 将渲染进程日志桥接到主进程日志，便于定位白屏/卡死
+  mainWindow.webContents.on('console-message', (_event, level, message, line, sourceId) => {
+    const tag = level >= 2 ? 'error' : 'info'
+    const src = sourceId ? `${sourceId}:${line}` : `line:${line}`
+    if (tag === 'error') {
+      console.error(`[renderer] ${message} (${src})`)
+    } else {
+      console.log(`[renderer] ${message} (${src})`)
+    }
+  })
+
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    console.error(`[renderer] process gone: reason=${details.reason}, exitCode=${details.exitCode}`)
+  })
+
+  mainWindow.webContents.on('unresponsive', () => {
+    console.error('[renderer] webContents became unresponsive')
+  })
+
   // 监听主题切换，更新标题栏按钮颜色（使用 bg.secondary 与自定义 TitleBar 背景色一致）
   ipcMain.on(IPC.THEME_UPDATE_TITLE_BAR, (_event, themeId: string) => {
     if (!mainWindow) return
@@ -222,7 +271,7 @@ function createWindow(): void {
   })
 
   // 加载渲染进程
-  if (process.env.ELECTRON_RENDERER_URL) {
+  if (!app.isPackaged && process.env.ELECTRON_RENDERER_URL) {
     mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL)
   } else {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
@@ -284,7 +333,7 @@ function initializeManagers(): void {
 
   // 11. Agent 编排基础设施
   agentBridge = new AgentBridge()
-  agentBridge.start(63721)
+  agentBridge.start(AGENT_BRIDGE_PORT)
   const gitService = new GitWorktreeService()
   agentManager = new AgentManager(sessionManager, database, {
     outputParser,
@@ -373,7 +422,7 @@ function initializeManagers(): void {
 
   // ★ 注入 bridgePort 到 agentManagerV2，使子会话（团队成员、spawn_agent）也能获得 MCP 工具
   // 必须在 spawnAgent() 首次调用前完成注入，否则子会话无法使用 list_sessions 等跨会话感知工具
-  agentManagerV2.setBridgePort(63721)
+  agentManagerV2.setBridgePort(AGENT_BRIDGE_PORT)
 
 
 }
@@ -791,7 +840,7 @@ app.whenReady().then(() => {
     trayManager,
     taskCoordinator,
     agentManagerV2,
-    agentBridgePort: 63721,
+    agentBridgePort: AGENT_BRIDGE_PORT,
     updateManager,
   }, fileChangeTracker)
 

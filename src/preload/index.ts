@@ -147,6 +147,12 @@ contextBridge.exposeInMainWorld('spectrAI', {
       return () => ipcRenderer.removeListener(IPC.SESSION_NAME_CHANGE, listener)
     },
 
+    onRefresh: (callback: () => void) => {
+      const channel = 'session:refresh'
+      const listener = () => callback()
+      ipcRenderer.on(channel, listener)
+      return () => ipcRenderer.removeListener(channel, listener)
+    },
 
     // SDK V2: 结构化消息发送
     sendMessage: (sessionId: string, text: string) =>

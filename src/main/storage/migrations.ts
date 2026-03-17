@@ -490,4 +490,13 @@ export const MIGRATIONS: Migration[] = [
       addColumnIfNotExists(db, 'mcp_servers', 'headers', 'TEXT')
     },
   },
+
+  // ── v30: skills 增加 orchestration_config 列（兼容新 SkillRepository 字段） ──
+  {
+    version: 30,
+    description: 'add orchestration_config column to skills',
+    up(db) {
+      addColumnIfNotExists(db, 'skills', 'orchestration_config', 'TEXT')
+    },
+  },
 ]
