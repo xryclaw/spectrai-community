@@ -328,7 +328,14 @@ const ConversationView: React.FC<ConversationViewProps> = ({ sessionId }) => {
       label: '复制全部对话内容',
       icon: <Copy size={13} />,
       onClick: () => {
-        const formatted = messages.map(m => {
+        const seen = new Set<string>()
+        const deduped = messages.filter((m) => {
+          if (!m?.id) return true
+          if (seen.has(m.id)) return false
+          seen.add(m.id)
+          return true
+        })
+        const formatted = deduped.map(m => {
           const role = m.role === 'user' ? '用户' : m.role === 'assistant' ? 'AI' : m.role
           return `[${role}] ${m.content || ''}`
         }).join('\n\n')
@@ -622,7 +629,7 @@ const ConversationView: React.FC<ConversationViewProps> = ({ sessionId }) => {
                       ? '请在上方审批 Claude 的计划...'
                       : pendingQuestion
                         ? '可点击上方选项，或直接输入自定义答案...'
-                        : '输入消息，Enter 发送，/ 查看命令，拖拽文件引用'
+                        : '输入消息，Enter 发送，Shift+Enter 换行，/ 查看命令，拖拽文件引用'
             }
           />
         </div>

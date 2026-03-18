@@ -2,7 +2,7 @@
  * 消息输入组件
  *
  * 多行文本输入框 + 发送按钮。
- * - Enter 发送（单行模式）
+ * - Enter 发送
  * - Shift+Enter 换行
  * - `@` 触发文件选择弹窗（Cursor 风格），选择后生成文件引用卡片
  * - `/` 前缀触发 Slash Command 自动补全
@@ -21,6 +21,7 @@ import { FileText, Code, FileImage, FileArchive, X, ExternalLink, MessagesSquare
 import { useSessionStore } from '../../stores/sessionStore'
 import { useUIStore } from '../../stores/uiStore'
 import { toPlatformShortcutLabel } from '../../utils/shortcut'
+import { decideMessageInputEnter, normalizeImeStateOnNonEnterKey } from './messageInputEnterPolicy'
 
 interface ImageAttachment {
   id: string
@@ -68,6 +69,7 @@ interface MessageInputProps {
   /** 点击"引用会话"按钮的回调（打开跨会话搜索面板） */
   onOpenSessionSearch?: () => void
 }
+
 
 /**
  * 从 initData 的 skills 数组提取 slash command 列表
@@ -219,6 +221,8 @@ const MessageInput: React.FC<MessageInputProps> = ({
   const [dragOver, setDragOver] = useState(false)
   const [dragHasNonImage, setDragHasNonImage] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const isComposingRef = useRef(false)
+  const imeEnterStateRef = useRef<'idle' | 'composing'>('idle')
 
   // ---- Slash Command 自动补全状态 ----
   const [showSlashMenu, setShowSlashMenu] = useState(false)
@@ -693,9 +697,10 @@ const MessageInput: React.FC<MessageInputProps> = ({
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     const nativeEvent = e.nativeEvent as any
-    const composing = isComposing || nativeEvent?.isComposing === true || nativeEvent?.keyCode === 229
-    if (composing && e.key === 'Enter' && !e.shiftKey) {
-      return
+    const keyCode = nativeEvent?.keyCode ?? nativeEvent?.which ?? nativeEvent?.charCode
+
+    if (e.key !== 'Enter') {
+      imeEnterStateRef.current = normalizeImeStateOnNonEnterKey(imeEnterStateRef.current, e.key)
     }
 
     // ①  @ 弹窗打开时拦截上下箭头/Enter/Esc/Tab
@@ -766,6 +771,22 @@ const MessageInput: React.FC<MessageInputProps> = ({
     }
 
     if (e.key === 'Enter' && !e.shiftKey) {
+      const decision = decideMessageInputEnter({
+        key: e.key,
+        shiftKey: e.shiftKey,
+        isComposing: isComposingRef.current || isComposing,
+        nativeIsComposing: nativeEvent?.isComposing === true,
+        keyCode,
+        imeState: imeEnterStateRef.current,
+      })
+      imeEnterStateRef.current = decision.nextImeState
+
+      if (decision.blockSend) {
+        e.preventDefault()
+        e.stopPropagation()
+        return
+      }
+
       e.preventDefault()
       handleSend()
     }
@@ -948,7 +969,7 @@ const MessageInput: React.FC<MessageInputProps> = ({
         )}
 
         {/* textarea + 工具按钮行 */}
-        <div className="flex items-end gap-1">
+        <div className="flex items-end gap-1" data-testid="message-input-row">
           {/* 跨会话引用按钮（有回调时才显示） */}
           {onOpenSessionSearch && (
             <button
@@ -964,12 +985,21 @@ const MessageInput: React.FC<MessageInputProps> = ({
           )}
 
           <textarea
+            data-testid="message-input-textarea"
             ref={textareaRef}
             value={text}
             onChange={handleChange}
             onKeyDown={handleKeyDown}
-            onCompositionStart={() => setIsComposing(true)}
-            onCompositionEnd={() => setIsComposing(false)}
+            onCompositionStart={() => {
+              imeEnterStateRef.current = 'composing'
+              isComposingRef.current = true
+              setIsComposing(true)
+            }}
+            onCompositionEnd={() => {
+              imeEnterStateRef.current = 'idle'
+              isComposingRef.current = false
+              setIsComposing(false)
+            }}
             onPaste={handlePaste}
             onFocus={adjustTextareaHeight}
             placeholder={isDisabled ? '等待 AI 响应...' : placeholder}
@@ -982,6 +1012,7 @@ const MessageInput: React.FC<MessageInputProps> = ({
               placeholder:text-text-muted"
           />
           <button
+            data-testid="message-input-send-button"
             onClick={handleSend}
             disabled={isDisabled || (!text.trim() && !hasAttachments)}
             className="px-3 py-1.5 bg-accent-blue text-white text-xs font-medium

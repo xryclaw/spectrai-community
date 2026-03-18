@@ -42,12 +42,13 @@ export class ConversationRepository {
     try {
       this.db.prepare(`
         INSERT OR IGNORE INTO conversation_messages
-        (id, session_id, role, content, timestamp, attachments, tool_name, tool_input, tool_result,
+        (id, session_id, message_id, role, content, timestamp, attachments, tool_name, tool_input, tool_result,
          is_error, thinking_text, usage_input_tokens, usage_output_tokens, tool_use_id, file_change)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         msg.id,
         msg.sessionId,
+        msg.id,
         msg.role,
         msg.content,
         msg.timestamp || new Date().toISOString(),
@@ -81,7 +82,7 @@ export class ConversationRepository {
              LIMIT ?
            )
            ORDER BY timestamp ASC, id ASC`
-        : 'SELECT * FROM conversation_messages WHERE session_id = ? ORDER BY timestamp ASC'
+        : 'SELECT * FROM conversation_messages WHERE session_id = ? ORDER BY timestamp ASC, id ASC'
       const rows = limit
         ? this.db.prepare(sql).all(sessionId, limit)
         : this.db.prepare(sql).all(sessionId)

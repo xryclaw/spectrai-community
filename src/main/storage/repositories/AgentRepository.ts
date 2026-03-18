@@ -4,7 +4,20 @@
 import type { AgentInfo, AgentResult } from '../../agent/types'
 
 export class AgentRepository {
+  private sessionSummaryColumnsCache: Set<string> | null = null
+
   constructor(private db: any, private usingSqlite: boolean) {}
+
+  private getSessionSummaryColumns(): Set<string> {
+    if (this.sessionSummaryColumnsCache) return this.sessionSummaryColumnsCache
+    try {
+      const rows = this.db.prepare("PRAGMA table_info('session_summaries')").all() as any[]
+      this.sessionSummaryColumnsCache = new Set(rows.map((r: any) => String(r.name || '')))
+    } catch {
+      this.sessionSummaryColumnsCache = new Set()
+    }
+    return this.sessionSummaryColumnsCache
+  }
 
   createAgentSession(info: AgentInfo): void {
     if (this.usingSqlite) {
@@ -93,10 +106,32 @@ export class AgentRepository {
   addSessionSummary(sessionId: string, type: string, content: string, metadata?: any): void {
     if (!this.db) return
     try {
-      this.db.prepare(`
-        INSERT INTO session_summaries (session_id, type, content, metadata)
-        VALUES (?, ?, ?, ?)
-      `).run(sessionId, type, content, metadata ? JSON.stringify(metadata) : null)
+      const cols = this.getSessionSummaryColumns()
+      const fields: string[] = ['session_id']
+      const values: any[] = [sessionId]
+
+      // 兼容旧表：summary 为 NOT NULL，必须同步写入
+      if (cols.has('summary')) {
+        fields.push('summary')
+        values.push(content || '')
+      }
+
+      if (cols.has('type')) {
+        fields.push('type')
+        values.push(type || 'summary')
+      }
+      if (cols.has('content')) {
+        fields.push('content')
+        values.push(content || '')
+      }
+      if (cols.has('metadata')) {
+        fields.push('metadata')
+        values.push(metadata ? JSON.stringify(metadata) : null)
+      }
+
+      const placeholders = fields.map(() => '?').join(', ')
+      const sql = `INSERT INTO session_summaries (${fields.join(', ')}) VALUES (${placeholders})`
+      this.db.prepare(sql).run(...values)
     } catch (err) {
       console.warn('[Database] Failed to add session summary:', err)
     }
