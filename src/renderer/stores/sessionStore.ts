@@ -93,6 +93,20 @@ function sortSessionsByLatest(sessions: Session[]): Session[] {
   return [...sessions].sort((a, b) => getSessionStartTime(b) - getSessionStartTime(a))
 }
 
+function getConversationTime(message: ConversationMessage): number {
+  const time = new Date(message.timestamp || 0).getTime()
+  return Number.isFinite(time) ? time : 0
+}
+
+function sortConversationMessages(messages: ConversationMessage[]): ConversationMessage[] {
+  return [...messages].sort((a, b) => {
+    const ta = getConversationTime(a)
+    const tb = getConversationTime(b)
+    if (ta !== tb) return ta - tb
+    return String(a.id || '').localeCompare(String(b.id || ''))
+  })
+}
+
 // 防止创建会话按钮连点导致重复请求
 const createSessionInFlightKeys = new Set<string>()
 const resumeSessionInFlight = new Map<string, Promise<ResumeSessionResult>>()
@@ -828,7 +842,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       return {
         conversations: {
           ...state.conversations,
-          [sessionId]: [...withoutDraft, msg]
+          [sessionId]: sortConversationMessages([...withoutDraft, msg])
         }
       }
     })
@@ -845,7 +859,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       return {
         conversations: {
           ...state.conversations,
-          [sessionId]: [...existing, ...newMsgs]
+          [sessionId]: sortConversationMessages([...existing, ...newMsgs])
         }
       }
     })

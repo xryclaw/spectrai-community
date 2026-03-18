@@ -199,12 +199,15 @@ export const MIGRATIONS: Migration[] = [
           CREATE TABLE session_summaries (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             session_id TEXT NOT NULL,
-            summary TEXT NOT NULL,
+            summary TEXT,
             key_points TEXT,
             ai_provider TEXT,
             ai_model TEXT,
             input_tokens INTEGER,
             output_tokens INTEGER,
+            type TEXT NOT NULL DEFAULT 'summary',
+            content TEXT,
+            metadata TEXT,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
           );
           CREATE INDEX IF NOT EXISTS idx_session_summaries_session
@@ -290,13 +293,14 @@ export const MIGRATIONS: Migration[] = [
       if (!tableExists(db, 'conversation_messages')) {
         db.exec(`
           CREATE TABLE conversation_messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id TEXT PRIMARY KEY,
             session_id TEXT NOT NULL,
             message_id TEXT,
             role TEXT NOT NULL,
             type TEXT NOT NULL DEFAULT 'text',
             content TEXT,
             timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            attachments TEXT,
             tool_name TEXT,
             tool_input TEXT,
             tool_result TEXT,
@@ -304,12 +308,15 @@ export const MIGRATIONS: Migration[] = [
             thinking_text TEXT,
             usage_input_tokens INTEGER,
             usage_output_tokens INTEGER,
-            tool_use_id TEXT
+            tool_use_id TEXT,
+            file_change TEXT
           );
-          CREATE INDEX idx_conv_messages_session ON conversation_messages(session_id, timestamp);
+          CREATE INDEX IF NOT EXISTS idx_conv_messages_session ON conversation_messages(session_id, timestamp);
         `)
       } else {
         addColumnIfNotExists(db, 'conversation_messages', 'attachments', 'TEXT')
+        addColumnIfNotExists(db, 'conversation_messages', 'file_change', 'TEXT')
+        addColumnIfNotExists(db, 'conversation_messages', 'message_id', 'TEXT')
       }
     },
   },
@@ -513,6 +520,102 @@ export const MIGRATIONS: Migration[] = [
         addColumnIfNotExists(db, 'session_summaries', 'content', 'TEXT')
         addColumnIfNotExists(db, 'session_summaries', 'metadata', 'TEXT')
       }
+    },
+  },
+
+  // ── v32: 规范 conversation_messages.id 为 TEXT（兼容字符串 message id/uuid） ──
+  {
+    version: 32,
+    description: 'normalize conversation_messages.id to TEXT primary key',
+    up(db) {
+      if (!tableExists(db, 'conversation_messages')) return
+
+      const cols = getColumnNames(db, 'conversation_messages')
+      const info = db.prepare("PRAGMA table_info('conversation_messages')").all() as any[]
+      const idCol = info.find((c: any) => c.name === 'id')
+      const idType = String(idCol?.type || '').toUpperCase()
+
+      // 已是 TEXT 主键则仅补齐缺列
+      if (idType.includes('TEXT')) {
+        addColumnIfNotExists(db, 'conversation_messages', 'attachments', 'TEXT')
+        addColumnIfNotExists(db, 'conversation_messages', 'file_change', 'TEXT')
+        addColumnIfNotExists(db, 'conversation_messages', 'message_id', 'TEXT')
+        return
+      }
+
+      const tx = db.transaction(() => {
+        db.exec('ALTER TABLE conversation_messages RENAME TO conversation_messages_legacy_v32')
+
+        db.exec(`
+          CREATE TABLE conversation_messages (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            role TEXT NOT NULL,
+            type TEXT NOT NULL DEFAULT 'text',
+            content TEXT,
+            timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            attachments TEXT,
+            tool_name TEXT,
+            tool_input TEXT,
+            tool_result TEXT,
+            is_error INTEGER NOT NULL DEFAULT 0,
+            thinking_text TEXT,
+            usage_input_tokens INTEGER,
+            usage_output_tokens INTEGER,
+            tool_use_id TEXT,
+            file_change TEXT,
+            message_id TEXT
+          )
+        `)
+
+        const idExpr = cols.includes('message_id')
+          ? "COALESCE(NULLIF(CAST(message_id AS TEXT), ''), CAST(id AS TEXT))"
+          : 'CAST(id AS TEXT)'
+        const typeExpr = cols.includes('type') ? "COALESCE(type, 'text')" : "'text'"
+        const attachmentsExpr = cols.includes('attachments') ? 'attachments' : 'NULL'
+        const toolNameExpr = cols.includes('tool_name') ? 'tool_name' : 'NULL'
+        const toolInputExpr = cols.includes('tool_input') ? 'tool_input' : 'NULL'
+        const toolResultExpr = cols.includes('tool_result') ? 'tool_result' : 'NULL'
+        const isErrorExpr = cols.includes('is_error') ? 'COALESCE(is_error, 0)' : '0'
+        const thinkingExpr = cols.includes('thinking_text') ? 'thinking_text' : 'NULL'
+        const inTokExpr = cols.includes('usage_input_tokens') ? 'usage_input_tokens' : 'NULL'
+        const outTokExpr = cols.includes('usage_output_tokens') ? 'usage_output_tokens' : 'NULL'
+        const toolUseIdExpr = cols.includes('tool_use_id') ? 'tool_use_id' : 'NULL'
+        const fileChangeExpr = cols.includes('file_change') ? 'file_change' : 'NULL'
+        const messageIdExpr = cols.includes('message_id') ? 'message_id' : 'NULL'
+
+        db.exec(`
+          INSERT OR IGNORE INTO conversation_messages (
+            id, session_id, role, type, content, timestamp, attachments,
+            tool_name, tool_input, tool_result, is_error, thinking_text,
+            usage_input_tokens, usage_output_tokens, tool_use_id, file_change, message_id
+          )
+          SELECT
+            ${idExpr},
+            session_id,
+            role,
+            ${typeExpr},
+            content,
+            timestamp,
+            ${attachmentsExpr},
+            ${toolNameExpr},
+            ${toolInputExpr},
+            ${toolResultExpr},
+            ${isErrorExpr},
+            ${thinkingExpr},
+            ${inTokExpr},
+            ${outTokExpr},
+            ${toolUseIdExpr},
+            ${fileChangeExpr},
+            ${messageIdExpr}
+          FROM conversation_messages_legacy_v32
+        `)
+
+        db.exec('DROP TABLE conversation_messages_legacy_v32')
+        db.exec('CREATE INDEX IF NOT EXISTS idx_conv_messages_session ON conversation_messages(session_id, timestamp)')
+      })
+
+      tx()
     },
   },
 ]

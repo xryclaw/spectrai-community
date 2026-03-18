@@ -12,6 +12,7 @@ import '@xterm/xterm/css/xterm.css'
 import { useUIStore } from '../stores/uiStore'
 import { useSessionStore } from '../stores/sessionStore'
 import { THEMES, DEFAULT_THEME_ID } from '../../shared/constants'
+import { shouldBlockTerminalEnterDuringIme } from './terminalInputPolicy'
 
 interface UseTerminalReturn {
   terminal: Terminal | null
@@ -193,6 +194,13 @@ export default function useTerminal(
     term.attachCustomKeyEventHandler((event: KeyboardEvent) => {
       const key = event.key.toLowerCase()
       const isAccel = event.ctrlKey || event.metaKey
+
+      // 输入法候选确认使用 Enter 时，不应把回车下发到终端执行命令。
+      if (event.type === 'keydown' && shouldBlockTerminalEnterDuringIme(event)) {
+        event.preventDefault()
+        event.stopPropagation()
+        return false
+      }
 
       // Ctrl/Cmd+V 或 Ctrl/Cmd+Shift+V：粘贴
       if (event.type === 'keydown' && key === 'v' && isAccel) {

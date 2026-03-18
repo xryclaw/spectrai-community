@@ -353,10 +353,12 @@ function cloneConversationHistoryForContinuation(
       })
     : []
 
-  const firstTsMs = Date.parse(String(source[0]?.timestamp || ''))
-  const hasFirstTs = Number.isFinite(firstTsMs)
+  const sourceTs = source
+    .map((msg) => Date.parse(String(msg?.timestamp || '')))
+    .filter((ts) => Number.isFinite(ts)) as number[]
+  const earliestTs = sourceTs.length > 0 ? Math.min(...sourceTs) : Date.now()
   const nowMs = Date.now()
-  const bannerTimestamp = new Date(hasFirstTs ? firstTsMs - 1 : nowMs - 1).toISOString()
+  const bannerTimestamp = new Date(earliestTs - 1).toISOString()
   const idPrefix = `continuation-${newSessionId}-${nowMs}`
 
   database.insertConversationMessage({
@@ -934,8 +936,10 @@ export function registerSessionHandlers(deps: IpcDependencies): void {
 
       const providerId = oldSession.providerId || oldSession.config?.providerId || 'claude-code'
       const provider: AIProvider = database.getProvider(providerId) || BUILTIN_CLAUDE_PROVIDER
+      const claudeSessionId = (oldSession as any).claudeSessionId
 
-      if (!provider.resumeArg) {
+      // 无原生 resume 能力，或缺少可精确恢复的 session id：统一走 continuation，保证历史召回可用
+      if (!provider.resumeArg || !claudeSessionId) {
         const resourceCheck = concurrencyGuard.checkResources();
         if (!resourceCheck.canCreate) {
           return { success: false, error: resourceCheck.reason };
@@ -1066,7 +1070,7 @@ export function registerSessionHandlers(deps: IpcDependencies): void {
 
         cloneConversationHistoryForContinuation(database, oldSessionId, newSessionId, history)
 
-        console.warn(`[IPC] ${provider.name} does not support native resume; created continuation session ${newSessionId} from ${oldSessionId}`);
+        console.warn(`[IPC] ${provider.name} resume fallback to continuation; created session ${newSessionId} from ${oldSessionId}`);
         return { success: true, sessionId: newSessionId, recreated: true };
       }
 
@@ -1075,7 +1079,6 @@ export function registerSessionHandlers(deps: IpcDependencies): void {
         return { success: false, error: resourceCheck.reason }
       }
 
-      const claudeSessionId = (oldSession as any).claudeSessionId
       const resumeArg = provider.resumeArg
       const isSubcommand = provider.resumeFormat === 'subcommand'
 
@@ -1291,12 +1294,27 @@ export function registerSessionHandlers(deps: IpcDependencies): void {
 
   ipcMain.handle(IPC.SESSION_CONVERSATION_HISTORY, async (_event, sessionId: string) => {
     try {
+      const dbMessages = database.getConversationMessages(sessionId)
       const smV2 = deps.sessionManagerV2
-      if (smV2) {
-        const liveMessages = smV2.getConversation(sessionId)
-        if (liveMessages.length > 0) return liveMessages
-      }
-      return database.getConversationMessages(sessionId)
+      if (!smV2) return dbMessages
+
+      const liveMessages = smV2.getConversation(sessionId)
+      if (liveMessages.length === 0) return dbMessages
+      if (dbMessages.length === 0) return liveMessages
+
+      // continuation 场景：DB 已克隆旧历史，内存包含新会话实时消息；合并后返回，避免历史“看起来丢失”
+      const merged = new Map<string, any>()
+      for (const msg of dbMessages) merged.set(msg.id, msg)
+      for (const msg of liveMessages) merged.set(msg.id, msg)
+
+      return Array.from(merged.values()).sort((a: any, b: any) => {
+        const taRaw = new Date(a.timestamp || 0).getTime()
+        const tbRaw = new Date(b.timestamp || 0).getTime()
+        const ta = Number.isFinite(taRaw) ? taRaw : 0
+        const tb = Number.isFinite(tbRaw) ? tbRaw : 0
+        if (ta !== tb) return ta - tb
+        return String(a.id || '').localeCompare(String(b.id || ''))
+      })
     } catch (error) {
       console.error('[IPC] SESSION_CONVERSATION_HISTORY error:', error)
       return []
