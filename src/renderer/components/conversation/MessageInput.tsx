@@ -27,6 +27,7 @@ interface ImageAttachment {
   previewUrl: string  // blob URL，仅用于缩略图展示，发送后 revoke
   filePath: string    // 真实磁盘路径，拼入消息文本
   name: string        // 显示名称（截图/文件名）
+  annotation: string  // 用户对图片的标注（可选）
 }
 
 /** 非图片文件引用（拖拽/粘贴路径/@ 符号产生） */
@@ -516,7 +517,7 @@ const MessageInput: React.FC<MessageInputProps> = ({
         const filePath = await window.spectrAI.fs.saveImageToTemp(base64, imageDataItem.type)
         const previewUrl = URL.createObjectURL(file)
         const name = `截图_${new Date().toLocaleTimeString()}`
-        setAttachments(prev => [...prev, { id: crypto.randomUUID(), previewUrl, filePath, name }])
+        setAttachments(prev => [...prev, { id: crypto.randomUUID(), previewUrl, filePath, name, annotation: '' }])
       }
       reader.readAsDataURL(file)
       return
@@ -543,6 +544,7 @@ const MessageInput: React.FC<MessageInputProps> = ({
             previewUrl,
             filePath,
             name: file.name,
+            annotation: '',
           }])
         } else {
           // 非图片文件 → 文件引用卡片
@@ -621,6 +623,7 @@ const MessageInput: React.FC<MessageInputProps> = ({
             previewUrl,
             filePath,
             name: file.name,
+            annotation: '',
           }])
         } else {
           // 非图片文件 → 文件引用卡片
@@ -659,10 +662,14 @@ const MessageInput: React.FC<MessageInputProps> = ({
 
     let fullMessage = trimmed
 
-    // 附加图片引用
+    // 附加图片引用 + 标注（用于指导模型关注区域与问题）
     if (attachments.length > 0) {
       setPreviewAttachment(null)
-      const imgLines = attachments.map(a => `[图片: ${a.filePath}]`).join('\n')
+      const imgLines = attachments.map((a, idx) => {
+        const note = a.annotation.trim()
+        if (!note) return `[图片: ${a.filePath}]`
+        return `[图片: ${a.filePath}]\n[图片标注#${idx + 1}: ${note}]`
+      }).join('\n\n')
       fullMessage = fullMessage ? `${fullMessage}\n\n${imgLines}` : imgLines
       attachments.forEach(a => URL.revokeObjectURL(a.previewUrl))
       setAttachments([])
@@ -863,40 +870,53 @@ const MessageInput: React.FC<MessageInputProps> = ({
           <div className="px-2 pt-2 pb-1 border-b border-border mb-1">
             <div className="flex flex-wrap gap-2 pb-1">
 
-              {/* 图片缩略图 */}
+              {/* 图片缩略图 + 标注输入 */}
               {attachments.map(att => (
-                <div key={att.id} className="relative flex-shrink-0 group">
-                  <button
-                    type="button"
-                    title={att.name}
-                    onClick={() => setPreviewAttachment(att)}
-                    className="w-20 h-20 rounded-lg overflow-hidden border border-border bg-bg-tertiary hover:border-accent-blue/40 btn-transition"
-                  >
-                    <img
-                      src={att.previewUrl}
-                      alt={att.name}
-                      className="w-full h-full object-cover"
-                    />
-                  </button>
-                  {/* 悬停时底部文件名蒙层 */}
-                  <div className="absolute inset-x-0 bottom-0 h-6 bg-gradient-to-t from-black/60 to-transparent
-                    rounded-b-lg opacity-0 group-hover:opacity-100 transition-opacity flex items-end px-1 pb-0.5">
-                    <span className="text-[10px] text-white/90 truncate w-full leading-tight">{att.name}</span>
+                <div key={att.id} className="relative flex-shrink-0 group w-52 rounded-lg border border-border bg-bg-secondary p-2">
+                  <div className="relative">
+                    <button
+                      type="button"
+                      title={att.name}
+                      onClick={() => setPreviewAttachment(att)}
+                      className="w-20 h-20 rounded-lg overflow-hidden border border-border bg-bg-tertiary hover:border-accent-blue/40 btn-transition"
+                    >
+                      <img
+                        src={att.previewUrl}
+                        alt={att.name}
+                        className="w-full h-full object-cover"
+                      />
+                    </button>
+                    {/* 悬停时底部文件名蒙层 */}
+                    <div className="absolute inset-x-0 bottom-0 h-6 bg-gradient-to-t from-black/60 to-transparent
+                      rounded-b-lg opacity-0 group-hover:opacity-100 transition-opacity flex items-end px-1 pb-0.5">
+                      <span className="text-[10px] text-white/90 truncate w-full leading-tight">{att.name}</span>
+                    </div>
+                    {/* 删除按钮（右上角） */}
+                    <button
+                      onClick={() => {
+                        if (previewAttachment?.id === att.id) setPreviewAttachment(null)
+                        URL.revokeObjectURL(att.previewUrl)
+                        setAttachments(prev => prev.filter(a => a.id !== att.id))
+                      }}
+                      className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full
+                        bg-bg-primary border border-border
+                        flex items-center justify-center
+                        text-text-secondary hover:text-accent-red hover:border-accent-red
+                        opacity-0 group-hover:opacity-100 transition-all
+                        text-xs leading-none"
+                    >×</button>
                   </div>
-                  {/* 删除按钮（右上角） */}
-                  <button
-                    onClick={() => {
-                      if (previewAttachment?.id === att.id) setPreviewAttachment(null)
-                      URL.revokeObjectURL(att.previewUrl)
-                      setAttachments(prev => prev.filter(a => a.id !== att.id))
+                  <textarea
+                    value={att.annotation}
+                    onChange={(e) => {
+                      const value = e.target.value
+                      setAttachments(prev => prev.map(a => a.id === att.id ? { ...a, annotation: value } : a))
                     }}
-                    className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full
-                      bg-bg-primary border border-border
-                      flex items-center justify-center
-                      text-text-secondary hover:text-accent-red hover:border-accent-red
-                      opacity-0 group-hover:opacity-100 transition-all
-                      text-xs leading-none"
-                  >×</button>
+                    placeholder="可选：标注区域信息/问题，例如“右上角按钮文案错误，左侧列表缺数据”"
+                    rows={2}
+                    className="mt-2 w-full resize-none rounded-md border border-border bg-bg-input px-2 py-1
+                      text-xs text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-blue"
+                  />
                 </div>
               ))}
 

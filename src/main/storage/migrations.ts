@@ -499,4 +499,20 @@ export const MIGRATIONS: Migration[] = [
       addColumnIfNotExists(db, 'skills', 'orchestration_config', 'TEXT')
     },
   },
+
+  // ── v31: 修复历史库缺列（attachments / session summary v2 字段） ──
+  {
+    version: 31,
+    description: 'backfill missing columns for conversation_messages and session_summaries',
+    up(db) {
+      if (tableExists(db, 'conversation_messages')) {
+        addColumnIfNotExists(db, 'conversation_messages', 'attachments', 'TEXT')
+      }
+      if (tableExists(db, 'session_summaries')) {
+        addColumnIfNotExists(db, 'session_summaries', 'type', "TEXT NOT NULL DEFAULT 'summary'")
+        addColumnIfNotExists(db, 'session_summaries', 'content', 'TEXT')
+        addColumnIfNotExists(db, 'session_summaries', 'metadata', 'TEXT')
+      }
+    },
+  },
 ]
