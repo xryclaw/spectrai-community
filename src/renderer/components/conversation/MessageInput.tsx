@@ -212,6 +212,7 @@ const MessageInput: React.FC<MessageInputProps> = ({
 
   const [text, setText] = useState(storedDraft)
   const [sending, setSending] = useState(false)
+  const [isComposing, setIsComposing] = useState(false)
   const [attachments, setAttachments] = useState<ImageAttachment[]>([])
   const [fileRefs, setFileRefs] = useState<FileRefAttachment[]>([])
   const [previewAttachment, setPreviewAttachment] = useState<ImageAttachment | null>(null)
@@ -691,6 +692,12 @@ const MessageInput: React.FC<MessageInputProps> = ({
   }, [text, attachments, fileRefs, sending, disabled, onSend, sessionId, setDraftInput])
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    const nativeEvent = e.nativeEvent as any
+    const composing = isComposing || nativeEvent?.isComposing === true || nativeEvent?.keyCode === 229
+    if (composing && e.key === 'Enter' && !e.shiftKey) {
+      return
+    }
+
     // ①  @ 弹窗打开时拦截上下箭头/Enter/Esc/Tab
     if (atMenuOpen && filteredAtFiles.length > 0) {
       if (e.key === 'ArrowUp') {
@@ -762,7 +769,7 @@ const MessageInput: React.FC<MessageInputProps> = ({
       e.preventDefault()
       handleSend()
     }
-  }, [handleSend, showSlashMenu, filteredCommands, selectedIndex, selectCommand,
+  }, [handleSend, isComposing, showSlashMenu, filteredCommands, selectedIndex, selectCommand,
       atMenuOpen, filteredAtFiles, atSelectedIndex, selectAtFile])
 
   const isDisabled = disabled || sending
@@ -961,6 +968,8 @@ const MessageInput: React.FC<MessageInputProps> = ({
             value={text}
             onChange={handleChange}
             onKeyDown={handleKeyDown}
+            onCompositionStart={() => setIsComposing(true)}
+            onCompositionEnd={() => setIsComposing(false)}
             onPaste={handlePaste}
             onFocus={adjustTextareaHeight}
             placeholder={isDisabled ? '等待 AI 响应...' : placeholder}

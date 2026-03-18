@@ -333,6 +333,62 @@ function buildResumeBootstrapPrompt(summaries: any[], messages: any[]): string |
   return prompt
 }
 
+function buildContinuationRestoreNotice(oldSessionId: string): string {
+  return `已从会话 ${oldSessionId} 恢复，已注入历史上下文`
+}
+
+function cloneConversationHistoryForContinuation(
+  database: any,
+  oldSessionId: string,
+  newSessionId: string,
+  history: any[],
+): void {
+  const source = Array.isArray(history)
+    ? history.filter((msg) => {
+        if (!msg) return false
+        const role = String(msg.role || '')
+        const content = String(msg.content || '').trim()
+        if (role === 'system' && /^已从会话\s+.+\s+恢复，已注入历史上下文$/.test(content)) return false
+        return true
+      })
+    : []
+
+  const firstTsMs = Date.parse(String(source[0]?.timestamp || ''))
+  const hasFirstTs = Number.isFinite(firstTsMs)
+  const nowMs = Date.now()
+  const bannerTimestamp = new Date(hasFirstTs ? firstTsMs - 1 : nowMs - 1).toISOString()
+  const idPrefix = `continuation-${newSessionId}-${nowMs}`
+
+  database.insertConversationMessage({
+    id: `${idPrefix}-0000-system`,
+    sessionId: newSessionId,
+    role: 'system',
+    content: buildContinuationRestoreNotice(oldSessionId),
+    timestamp: bannerTimestamp,
+  })
+
+  source.forEach((msg, idx) => {
+    const usage = msg?.usage || {}
+    database.insertConversationMessage({
+      id: `${idPrefix}-${String(idx + 1).padStart(4, '0')}`,
+      sessionId: newSessionId,
+      role: msg.role,
+      content: msg.content || '',
+      timestamp: msg.timestamp || new Date(nowMs + idx + 1).toISOString(),
+      attachments: msg.attachments,
+      toolName: msg.toolName,
+      toolInput: msg.toolInput,
+      toolResult: msg.toolResult,
+      isError: msg.isError,
+      thinkingText: msg.thinkingText,
+      usageInputTokens: usage.inputTokens,
+      usageOutputTokens: usage.outputTokens,
+      toolUseId: msg.toolUseId,
+      fileChange: msg.fileChange,
+    })
+  })
+}
+
 // 防止前端连点“创建”造成重复会话（同参数请求共享同一 Promise）
 const createSessionInFlight = new Map<string, Promise<any>>()
 
@@ -1007,6 +1063,8 @@ export function registerSessionHandlers(deps: IpcDependencies): void {
 
         const readyTimeoutMs = provider.id === 'codex' ? 12000 : 6000;
         await smV2.waitForSessionReady(newSessionId, readyTimeoutMs);
+
+        cloneConversationHistoryForContinuation(database, oldSessionId, newSessionId, history)
 
         console.warn(`[IPC] ${provider.name} does not support native resume; created continuation session ${newSessionId} from ${oldSessionId}`);
         return { success: true, sessionId: newSessionId, recreated: true };
