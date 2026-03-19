@@ -88,7 +88,14 @@ export default function BottomTerminalDock() {
     try {
       const selectedShell = SHELL_OPTIONS.find((item) => item.value === terminalDockShell) || SHELL_OPTIONS[0]
       const providers = await window.spectrAI.provider.getAll()
+      if (!providers.length) {
+        throw new Error('未检测到可用 Provider，请先在设置中配置 Provider')
+      }
+
       const cwd = window.spectrAI.app.getCwd() || ''
+      if (!cwd) {
+        throw new Error('无法获取当前工作目录，请确认应用初始化完成后重试')
+      }
 
       await createSession({
         id: `terminal-${Date.now()}`,
@@ -107,7 +114,7 @@ export default function BottomTerminalDock() {
       }
       setTerminalDockOpen(true)
     } catch (error: any) {
-      setErrorText(error?.message || '新建终端失败')
+      setErrorText(error?.message || '新建终端失败，请稍后重试')
     } finally {
       setCreating(false)
     }
@@ -124,17 +131,27 @@ export default function BottomTerminalDock() {
     }
   }
 
-  if (!terminalDockOpen) {
-    return null
-  }
+  const openClass = terminalDockOpen
+    ? 'translate-y-0 opacity-100'
+    : 'translate-y-[calc(100%+20px)] opacity-0'
+
+  const bodyClass = terminalDockCollapsed
+    ? 'max-h-0 opacity-0'
+    : 'max-h-[340px] opacity-100'
 
   return (
-    <div className="absolute left-0 right-0 bottom-0 z-40 pointer-events-none">
-      <div className="mx-3 mb-2 rounded-xl border border-border bg-bg-secondary/95 backdrop-blur-sm shadow-2xl pointer-events-auto overflow-hidden">
+    <div className="absolute left-0 right-0 bottom-0 z-40 pointer-events-none" aria-hidden={!terminalDockOpen}>
+      <div
+        className={[
+          'mx-3 mb-2 rounded-xl border border-border bg-bg-secondary/95 backdrop-blur-sm shadow-2xl overflow-hidden transition-all duration-200 ease-out transform-gpu',
+          terminalDockOpen ? 'pointer-events-auto' : 'pointer-events-none',
+          openClass,
+        ].join(' ')}
+      >
         <div className="h-10 border-b border-border/80 px-2 flex items-center justify-between gap-2">
           <div className="flex items-center gap-1 min-w-0 overflow-x-auto">
             {dockSessions.length === 0 && (
-              <div className="px-2 py-1 text-xs text-text-muted">暂无终端，请点击右侧 + 新建</div>
+              <div className="px-2 py-1 text-xs text-text-muted">暂无终端会话，选择类型后点击右侧 + 新建</div>
             )}
 
             {dockSessions.map((session) => {
@@ -209,21 +226,25 @@ export default function BottomTerminalDock() {
           </div>
         </div>
 
-        {!terminalDockCollapsed && (
-          <div className="h-[340px] bg-bg-primary">
+        <div className={[
+          'bg-bg-primary overflow-hidden transition-[max-height,opacity] duration-200 ease-out',
+          bodyClass,
+        ].join(' ')}>
+          <div className="h-[340px]">
             {activeSessionId ? (
               <ConversationView sessionId={activeSessionId} />
             ) : (
-              <div className="h-full flex items-center justify-center text-sm text-text-muted">
-                请选择或新建一个终端
+              <div className="h-full flex flex-col items-center justify-center gap-2 text-sm text-text-muted">
+                <span>当前没有可显示的终端</span>
+                <span className="text-xs text-text-muted/80">请在右上角选择 shell 类型后点击 + 新建</span>
               </div>
             )}
           </div>
-        )}
+        </div>
 
         {errorText && (
           <div className="px-3 py-2 border-t border-accent-red/30 bg-accent-red/10 text-accent-red text-xs">
-            {errorText}
+            创建失败：{errorText}
           </div>
         )}
       </div>
