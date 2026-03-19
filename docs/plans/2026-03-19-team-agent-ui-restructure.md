@@ -1,7 +1,7 @@
 # Team Agent UI 重构计划
 
 > 日期: 2026-03-19
-> 状态: 实施中（代码 Step 1-5 已完成，Step 6-7 待前端补齐；交互与文案终稿已完成）
+> 状态: 实施中（代码 Step 1-7 主流程已闭环；已完成终版文案与术语封板复核）
 
 ## Context
 
@@ -74,19 +74,28 @@ Team Agent 的后端（types、IPC、DB、TeamOrchestrator、preload bridge、te
 2. 调用 `sessionStore.selectSession(leaderSessionId)` 切换到该会话
 3. 侧边栏自动切换为 `activePanelLeft = 'sessions'`
 
-### Step 6: 团队会话在 session 列表中的显示 🔄
+### Step 6: 团队会话在 session 列表中的显示 ✅
 
 `src/renderer/components/layout/sidebar/SessionItem.tsx`
 
-团队的 leader session 已经在 session 列表中。需要：
-- 识别团队 session（通过 teamStore 的 sessionTeamMap）
-- 为团队 session 添加特殊标识（Users 图标 + 成员数量 badge）
-- 其他团队成员的 session 仍然被 AgentSubList 过滤隐藏
+已完成并通过复核：
+- 已识别团队 session（`useTeamStore.getTeamForSession(session.id)`）
+- 已展示团队特殊标识（`Users` 图标 + 成员数量 badge）
+- 团队成员 session 仍被 `AgentSubList` 过滤隐藏（`name` 含 `[Team:` 不展示）
 
-### Step 7: 验证 ⏳
+### Step 7: 验证 ✅（终版封板复核完成）
 
-- `npm run build` 确认无编译错误
-- 功能流程：创建模板 → 启动团队 → 团队出现在 session 列表 → 点击团队 session → 侧边栏显示成员 → 点击成员查看对话 → 切换回普通 session → 侧边栏恢复 session 列表
+本轮对照基线：`docs/plans/2026-03-19-team-agent-ui-interaction-copy-final.md`。
+
+复核结论：
+- Step 6 主目标保持闭环；
+- 团队会话主流程（识别、切换、成员钻取、异常降级）已闭环；
+- **无阻断差异**（P0=0），可进入最终收口。
+
+需修正项（P1，建议发布前一并收敛）：
+- `TeamMembersSidebar.tsx`：空成员文案当前为“暂无成员”，建议统一为“暂无团队成员”，并补充说明“请先回到模板补充成员后再启动团队”。
+- `SessionItem.tsx`：团队 badge 当前为图标+数量，建议补齐“团队”文本标签（或等价可读文案）以对齐 `teamAgent.session.badge` 语义。
+- 团队相关组件仍存在硬编码中文，建议逐步替换为 `teamAgent.*` i18n key，避免后续术语漂移与多语言成本。
 
 ## 涉及的文件
 
@@ -97,7 +106,7 @@ Team Agent 的后端（types、IPC、DB、TeamOrchestrator、preload bridge、te
 | `src/renderer/components/layout/Sidebar.tsx` | 修改 — sessions 面板内条件渲染团队成员 | ✅ |
 | `src/renderer/components/terminal/TerminalPanel.tsx` | 修改 — 团队会话渲染团队内容 | ✅ |
 | `src/renderer/components/team/TeamPanel.tsx` | 修改 — 精简为模板管理 + 跳转 | ✅ |
-| `src/renderer/components/layout/sidebar/SessionItem.tsx` | 修改 — 团队 session 特殊标识 | 🔄 |
+| `src/renderer/components/layout/sidebar/SessionItem.tsx` | 修改 — 团队 session 特殊标识 | ✅ |
 
 共修改 5 个现有文件，新建 1 个文件。后端无需改动。
 

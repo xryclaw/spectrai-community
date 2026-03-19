@@ -30,6 +30,8 @@ export const SessionItem = React.memo(function SessionItem({
     (s.agents[session.id] || []).filter((a: any) => a.status === 'running' || a.status === 'pending').length
   )
   const teamInstance = useTeamStore((s) => s.getTeamForSession(session.id))
+  const mappedTeamId = useTeamStore((s) => s.sessionTeamMap[session.id])
+  const hasMappedTeamWithoutInstance = useTeamStore((s) => !!mappedTeamId && !s.instances.some((i) => i.id === mappedTeamId))
   const teamLeader = teamInstance?.members?.find((member) => member.role === 'leader')
   const isTeamSession = !!teamInstance && (!teamLeader?.sessionId || teamLeader.sessionId === session.id)
   const teamMemberCount = teamInstance?.members?.length || 0
@@ -149,6 +151,11 @@ export const SessionItem = React.memo(function SessionItem({
             >
               <Users className="w-2.5 h-2.5" />
               {teamMemberCount}
+            </span>
+          )}
+          {hasMappedTeamWithoutInstance && (
+            <span className="px-1 py-0.5 rounded text-[9px] font-medium bg-accent-yellow/20 text-accent-yellow leading-none flex-shrink-0">
+              团队数据异常
             </span>
           )}
           {runningAgentCount > 0 && (

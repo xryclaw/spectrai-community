@@ -1073,18 +1073,78 @@ function SessionsPanelWrapper() {
   const fetchInstances = useTeamStore((s) => s.fetchInstances)
   const initListeners = useTeamStore((s) => s.initListeners)
   const cleanupListeners = useTeamStore((s) => s.cleanupListeners)
-  const [teamInited, setTeamInited] = useState(false)
+  const sessionTeamMap = useTeamStore((s) => s.sessionTeamMap)
+  const [teamLoading, setTeamLoading] = useState(true)
+  const [teamLoadError, setTeamLoadError] = useState<string | null>(null)
+
+  const loadTeamInstances = useCallback(async () => {
+    setTeamLoading(true)
+    setTeamLoadError(null)
+    try {
+      await fetchInstances()
+    } catch {
+      setTeamLoadError('团队信息加载失败')
+    } finally {
+      setTeamLoading(false)
+    }
+  }, [fetchInstances])
 
   // 初始化团队数据（只执行一次）
   useEffect(() => {
-    fetchInstances().then(() => setTeamInited(true))
+    void loadTeamInstances()
     initListeners()
     return () => cleanupListeners()
-  }, [])
+  }, [loadTeamInstances, initListeners, cleanupListeners])
 
+  const teamInited = !teamLoading
+  const mappedTeamId = selectedSessionId ? sessionTeamMap[selectedSessionId] : undefined
   const teamInstance = teamInited && selectedSessionId
     ? getTeamForSession(selectedSessionId)
     : null
+
+  if (mappedTeamId && teamLoading) {
+    return (
+      <div className="flex flex-col h-full px-3 py-3" data-testid="team-members-sidebar-loading">
+        <div className="animate-pulse h-4 w-40 bg-bg-hover rounded mb-3" />
+        <div className="animate-pulse h-8 w-full bg-bg-hover rounded mb-3" />
+        <div className="space-y-2">
+          <div className="animate-pulse h-14 w-full bg-bg-hover rounded" />
+          <div className="animate-pulse h-14 w-full bg-bg-hover rounded" />
+          <div className="animate-pulse h-14 w-full bg-bg-hover rounded" />
+        </div>
+      </div>
+    )
+  }
+
+  if (mappedTeamId && (teamLoadError || !teamInstance)) {
+    return (
+      <div className="flex flex-col h-full px-3 py-3" data-testid="team-members-sidebar-error">
+        <div className="px-3 py-3 rounded-lg border border-accent-red/30 bg-accent-red/10">
+          <p className="text-sm text-accent-red font-medium">团队信息加载失败</p>
+          <p className="text-xs text-text-muted mt-1">团队实例不存在或已被移除，请重试后再查看。</p>
+          <div className="mt-3 flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => void loadTeamInstances()}
+              className="text-xs px-2 py-1 rounded border border-border hover:bg-bg-hover btn-transition"
+            >
+              重试
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                useTeamStore.getState().selectMember(null)
+                useSessionStore.getState().selectSession('')
+              }}
+              className="text-xs px-2 py-1 rounded border border-border hover:bg-bg-hover btn-transition"
+            >
+              返回会话列表
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   if (teamInstance) {
     return (

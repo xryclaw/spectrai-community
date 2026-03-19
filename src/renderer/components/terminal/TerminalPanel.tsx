@@ -43,8 +43,10 @@ const TerminalPanel: React.FC<TerminalPanelProps> = ({ sessionId, onMaximize, on
 
   // 团队相关状态
   const teamInstance = useTeamStore(state => state.getTeamForSession(sessionId))
+  const mappedTeamId = useTeamStore(state => state.sessionTeamMap[sessionId])
   const selectedMemberId = useTeamStore(state => state.selectedMemberId)
   const selectMember = useTeamStore(state => state.selectMember)
+  const isTeamMissing = !!mappedTeamId && !teamInstance
 
   // 已结束状态（无需确认可直接关闭）
   const INACTIVE_STATUSES = new Set(['completed', 'terminated', 'interrupted', 'error'])
@@ -114,6 +116,13 @@ const TerminalPanel: React.FC<TerminalPanelProps> = ({ sessionId, onMaximize, on
         onMaximize={onMaximize}
         onClose={handleClose}
       />
+
+      {/* 团队实例缺失时显示轻提示，内容区降级为普通会话 */}
+      {isTeamMissing && (
+        <div className="px-3 py-2 border-b border-accent-yellow/30 bg-accent-yellow/10 text-accent-yellow text-xs">
+          团队数据缺失，已降级为普通会话视图
+        </div>
+      )}
 
       {/* 对话视图（团队/普通） */}
       {renderContent()}

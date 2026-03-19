@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { Plus, Play, Edit3, Trash2, Users, ChevronDown, ChevronRight, ExternalLink } from 'lucide-react'
+import { AlertCircle, Plus, Play, Edit3, Trash2, Users, ChevronDown, ChevronRight, ExternalLink } from 'lucide-react'
 import { useTeamStore } from '../../stores/teamStore'
 import { useSessionStore } from '../../stores/sessionStore'
 import { useUIStore } from '../../stores/uiStore'
@@ -42,13 +42,23 @@ export function TeamPanel() {
   const [editingTemplate, setEditingTemplate] = useState<TeamTemplate | undefined>()
   const [launchTemplate, setLaunchTemplate] = useState<TeamTemplate | null>(null)
   const [templatesExpanded, setTemplatesExpanded] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
+
+  const loadData = async () => {
+    setLoadError(null)
+    try {
+      await Promise.all([fetchTemplates(), fetchInstances()])
+    } catch {
+      setLoadError('团队数据加载失败')
+    }
+  }
 
   useEffect(() => {
-    fetchTemplates()
-    fetchInstances()
+    void loadData()
     initListeners()
     return () => cleanupListeners()
-  }, [fetchTemplates, fetchInstances, initListeners, cleanupListeners])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const handleEditTemplate = (t: TeamTemplate) => {
     setEditingTemplate(t)
@@ -78,7 +88,6 @@ export function TeamPanel() {
 
   return (
     <div className="flex flex-col h-full bg-bg-secondary border-r border-border">
-      {/* Top bar */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-border">
         <div className="flex items-center gap-2">
           <Users size={16} className="text-text-secondary" />
@@ -92,12 +101,27 @@ export function TeamPanel() {
         </button>
       </div>
 
+      {loadError && (
+        <div className="mx-4 mt-3 px-3 py-2 rounded-lg border border-accent-red/30 bg-accent-red/10 flex items-center justify-between gap-2">
+          <span className="text-accent-red text-xs flex items-center gap-1.5">
+            <AlertCircle size={14} />
+            {loadError}
+          </span>
+          <button
+            type="button"
+            onClick={() => void loadData()}
+            className="text-xs px-2 py-1 rounded border border-border hover:bg-bg-hover btn-transition"
+          >
+            重新加载
+          </button>
+        </div>
+      )}
+
       <div className="flex-1 overflow-y-auto">
-        {/* Running instances */}
         <div className="px-4 py-3">
           <h4 className="text-text-muted text-xs uppercase tracking-wide mb-2">运行中的团队</h4>
           {instances.length === 0 ? (
-            <p className="text-text-muted text-xs py-2">暂无运行中的团队</p>
+            <p className="text-text-muted text-xs py-2">暂无运行中的团队，请从模板启动一个团队</p>
           ) : (
             <div className="space-y-1">
               {instances.map((inst) => (
@@ -118,7 +142,7 @@ export function TeamPanel() {
                   </div>
                   <ExternalLink size={12} className="text-text-muted opacity-0 group-hover:opacity-100 btn-transition" />
                   <button
-                    onClick={(e) => { e.stopPropagation(); deleteInstance(inst.id) }}
+                    onClick={(e) => { e.stopPropagation(); void deleteInstance(inst.id) }}
                     className="text-text-muted hover:text-red-400 btn-transition p-1 opacity-0 group-hover:opacity-100"
                   >
                     <Trash2 size={12} />
@@ -129,7 +153,6 @@ export function TeamPanel() {
           )}
         </div>
 
-        {/* Templates */}
         <div className="px-4 py-3 border-t border-border">
           <div className="flex items-center justify-between mb-2">
             <button
@@ -150,7 +173,7 @@ export function TeamPanel() {
           {templatesExpanded && (
             <div className="space-y-2">
               {templates.length === 0 ? (
-                <p className="text-text-muted text-xs py-2">暂无模板</p>
+                <p className="text-text-muted text-xs py-2">暂无模板，点击“创建模板”开始配置</p>
               ) : (
                 templates.map((t) => (
                   <div key={t.id} className="bg-bg-tertiary rounded-lg border border-border p-3">
@@ -178,7 +201,7 @@ export function TeamPanel() {
                           <Edit3 size={14} />
                         </button>
                         <button
-                          onClick={() => deleteTemplate(t.id)}
+                          onClick={() => void deleteTemplate(t.id)}
                           className="text-text-muted hover:text-red-400 btn-transition p-1"
                           title="删除"
                         >
@@ -194,7 +217,6 @@ export function TeamPanel() {
         </div>
       </div>
 
-      {/* Modals */}
       {showTemplateModal && (
         <TeamTemplateModal
           isOpen={true}

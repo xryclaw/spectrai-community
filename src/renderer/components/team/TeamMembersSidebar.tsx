@@ -170,8 +170,16 @@ export function TeamMembersSidebar({
       </div>
       <div className="flex-1 overflow-y-auto px-3 pb-3">
         {!instance.members?.length ? (
-          <div className="text-[12px] text-text-muted px-3 py-2 border border-border rounded-lg">
-            暂无成员
+          <div className="text-[12px] text-text-muted px-3 py-2 border border-border rounded-lg space-y-2">
+            <p className="text-text-secondary">暂无团队成员</p>
+            <p className="text-[11px]">请先回到模板补充成员后再启动团队。</p>
+            <button
+              type="button"
+              onClick={onBack}
+              className="text-xs px-2 py-1 rounded border border-border hover:bg-bg-hover btn-transition"
+            >
+              返回会话列表
+            </button>
           </div>
         ) : (
           <div className="space-y-0.5">
