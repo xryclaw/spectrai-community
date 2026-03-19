@@ -17,6 +17,40 @@ import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import { useSessionStore } from '../../stores/sessionStore'
 import { useSkillStore } from '../../stores/skillStore'
 import { useMcpStore } from '../../stores/mcpStore'
+import { useTaskStore } from '../../stores/taskStore'
+
+// ---- 风险状态辅助 ----
+
+function firstNonEmptyString(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    if (typeof value !== 'string') continue
+    const trimmed = value.trim()
+    if (trimmed) return trimmed
+  }
+  return undefined
+}
+
+function resolveWorkspaceMode(config: Record<string, unknown>): string {
+  const explicit = firstNonEmptyString(config.workspaceMode, config.workspace_mode, config.mode)
+  if (explicit) return explicit
+  if (typeof config.workspaceId === 'string' && config.workspaceId.trim()) return 'workspace'
+  if (config.worktreeEnabled === true) return 'worktree'
+  return 'single'
+}
+
+function isFailureLike(value: string): boolean {
+  const normalized = value.trim().toLowerCase()
+  if (!normalized) return false
+  return /fail|failed|error|pending|stuck|blocked|冲突|失败|异常|待处理/.test(normalized)
+}
+
+function isFallbackUsedLike(value: string): boolean {
+  const normalized = value.trim().toLowerCase()
+  if (!normalized || normalized === 'unknown' || normalized === 'none' || normalized === 'disabled' || normalized === '-') {
+    return false
+  }
+  return /used|enabled|prompt-injection|on|true|启用|已用/.test(normalized)
+}
 
 // ---- 类型 ----
 
@@ -109,6 +143,103 @@ const SessionToolbar: React.FC<SessionToolbarProps> = ({ sessionId, onSkillClick
   const providerId = useSessionStore(s =>
     s.sessions.find(sess => sess.id === sessionId)?.providerId
   )
+  const sessionConfig = useSessionStore(s =>
+    (s.sessions.find(sess => sess.id === sessionId)?.config || {}) as Record<string, unknown>
+  )
+  const sessionStatus = useSessionStore(s => s.sessions.find(sess => sess.id === sessionId)?.status)
+  const selectSession = useSessionStore(s => s.selectSession)
+  const startSessionForTask = useTaskStore(s => s.startSessionForTask)
+
+  const [riskActionBusy, setRiskActionBusy] = useState(false)
+  const [riskActionError, setRiskActionError] = useState('')
+
+  const riskBadges = useMemo(() => {
+    const branch = firstNonEmptyString(
+      sessionConfig.worktreeBranch,
+      sessionConfig.gitBranch,
+      sessionConfig.branch,
+    ) || '-'
+    const cleanup = firstNonEmptyString(
+      sessionConfig.worktreeCleanupStatus,
+      sessionConfig.cleanupStatus,
+      sessionConfig.cleanup,
+    ) || 'unknown'
+    const fallback = firstNonEmptyString(
+      sessionConfig.worktreeFallbackStatus,
+      sessionConfig.fallbackStatus,
+      sessionConfig.fallbackMode,
+      sessionConfig.fallback,
+    ) || 'unknown'
+
+    return [
+      { label: 'workspace mode', value: resolveWorkspaceMode(sessionConfig) },
+      { label: 'branch', value: branch },
+      { label: 'cleanup', value: cleanup },
+      { label: 'fallback', value: fallback },
+    ]
+  }, [sessionConfig])
+
+  const showRiskBadges = useMemo(() => {
+    return sessionConfig.worktreeEnabled === true ||
+      (typeof sessionConfig.workspaceId === 'string' && sessionConfig.workspaceId.trim().length > 0) ||
+      !!firstNonEmptyString(
+        sessionConfig.workspaceMode,
+        sessionConfig.worktreeCleanupStatus,
+        sessionConfig.cleanupStatus,
+        sessionConfig.worktreeFallbackStatus,
+        sessionConfig.fallbackStatus,
+      )
+  }, [sessionConfig])
+
+  const taskId = useMemo(() => {
+    return typeof sessionConfig.taskId === 'string' && sessionConfig.taskId.trim()
+      ? sessionConfig.taskId.trim()
+      : ''
+  }, [sessionConfig.taskId])
+
+  const cleanupState = useMemo(() => {
+    return firstNonEmptyString(
+      sessionConfig.worktreeCleanupStatus,
+      sessionConfig.cleanupStatus,
+      sessionConfig.cleanup,
+    ) || 'unknown'
+  }, [sessionConfig])
+
+  const fallbackState = useMemo(() => {
+    return firstNonEmptyString(
+      sessionConfig.worktreeFallbackStatus,
+      sessionConfig.fallbackStatus,
+      sessionConfig.fallbackMode,
+      sessionConfig.fallback,
+    ) || 'unknown'
+  }, [sessionConfig])
+
+  const showRiskActions = useMemo(() => {
+    if (!taskId) return false
+    if (sessionStatus === 'error') return true
+    return isFailureLike(cleanupState) || isFailureLike(fallbackState) || isFallbackUsedLike(fallbackState)
+  }, [taskId, sessionStatus, cleanupState, fallbackState])
+
+  const runTaskSessionAction = useCallback(async (mode: 'retry_worktree' | 'fallback_single') => {
+    if (!taskId || riskActionBusy) return
+    setRiskActionBusy(true)
+    setRiskActionError('')
+    try {
+      const config = mode === 'fallback_single'
+        ? { worktreeEnabled: false }
+        : { worktreeEnabled: true }
+      const result = await startSessionForTask(taskId, config)
+      if (!result.success || !result.sessionId) {
+        throw new Error(result.error || '启动会话失败')
+      }
+      selectSession(result.sessionId)
+    } catch (error: any) {
+      setRiskActionError(error?.message || '操作失败，请稍后重试')
+    } finally {
+      setRiskActionBusy(false)
+    }
+  }, [taskId, riskActionBusy, startSessionForTask, selectSession])
+
   const allSkills = useSkillStore(s => s.skills)
   const fetchSkills = useSkillStore(s => s.fetchAll)
   const allMcpServers = useMcpStore(s => s.servers)
@@ -260,7 +391,41 @@ const SessionToolbar: React.FC<SessionToolbarProps> = ({ sessionId, onSkillClick
   if (skillList.length === 0 && mcpList.length === 0) return null
 
   return (
-    <div className="px-4 pt-1.5 pb-0 flex items-center gap-1.5 bg-bg-primary">
+    <div className="px-4 pt-1.5 pb-1 bg-bg-primary">
+      <div className="flex items-center gap-1.5">
+        {showRiskBadges && (
+          <div className="flex items-center gap-1 mr-1 min-w-0 flex-wrap">
+            {riskBadges.map(item => (
+              <span
+                key={item.label}
+                className="inline-flex items-center px-1.5 py-0.5 rounded border border-accent-red/35 bg-accent-red/12 text-accent-red text-[10px] font-mono whitespace-nowrap"
+                title={`${item.label}: ${item.value}`}
+              >
+                {item.label}: {item.value}
+              </span>
+            ))}
+            {showRiskActions && (
+              <>
+                <button
+                  onClick={() => runTaskSessionAction('retry_worktree')}
+                  disabled={riskActionBusy}
+                  className="inline-flex items-center px-1.5 py-0.5 rounded border border-accent-yellow/40 bg-accent-yellow/15 text-accent-yellow text-[10px] font-medium hover:bg-accent-yellow/20 disabled:opacity-50"
+                  title="保留 Worktree 隔离并重试创建会话"
+                >
+                  重试
+                </button>
+                <button
+                  onClick={() => runTaskSessionAction('fallback_single')}
+                  disabled={riskActionBusy}
+                  className="inline-flex items-center px-1.5 py-0.5 rounded border border-border bg-bg-secondary text-text-secondary text-[10px] font-medium hover:bg-bg-hover disabled:opacity-50"
+                  title="回退到非 Worktree 模式创建会话"
+                >
+                  回退
+                </button>
+              </>
+            )}
+          </div>
+        )}
 
       {/* ---- Skill 按钮 ---- */}
       {skillList.length > 0 && (
@@ -467,6 +632,15 @@ const SessionToolbar: React.FC<SessionToolbarProps> = ({ sessionId, onSkillClick
             </div>
           )}
         </div>
+      )}
+      </div>
+      {showRiskBadges && (
+        <div className="mt-1 text-[10px] text-text-muted">
+          并行隔离说明：每个会话默认使用独立 worktree 分支与目录，互不污染；异常时可先重试，必要时回退到非 worktree 模式。
+        </div>
+      )}
+      {riskActionError && (
+        <div className="mt-1 text-[10px] text-accent-red">{riskActionError}</div>
       )}
     </div>
   )
