@@ -11,6 +11,15 @@ import { STATUS_LABELS, AGENT_STATUS_COLORS } from './types'
 import type { SessionItemProps } from './types'
 import { getShortPath, getProviderColor, getProviderLabel, getActivityPreview } from './utils'
 
+function firstNonEmptyString(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    if (typeof value !== 'string') continue
+    const trimmed = value.trim()
+    if (trimmed) return trimmed
+  }
+  return undefined
+}
+
 /** 单个会话项 */
 export const SessionItem = React.memo(function SessionItem({
   session, isSelected, lastActivity, onSelect, onContextMenu, onResume, onRename,
@@ -26,8 +35,31 @@ export const SessionItem = React.memo(function SessionItem({
   const statusLabel = STATUS_LABELS[session.status] || session.status
   const statusColor = STATUS_COLORS[session.status] || STATUS_COLORS.idle
   const dirPath = session.config.workingDirectory || ''
-  // 分支信息：worktree session 直接用 config.worktreeBranch，普通 session 留空
-  const branchName = session.config?.worktreeBranch || null
+  // Worktree 风险状态：兼容新旧字段名，避免联调阶段字段未完全统一时漏显
+  const branchName = firstNonEmptyString(
+    session.config?.worktreeBranch,
+    (session.config as any)?.gitBranch,
+    (session.config as any)?.branch,
+  ) || null
+  const workspaceMode = firstNonEmptyString(
+    (session.config as any)?.workspaceMode,
+    (session.config as any)?.worktreeWorkspaceMode,
+    (session.config as any)?.workspace_mode,
+    (session.config as any)?.mode,
+  ) || (session.config?.workspaceId ? 'workspace' : (session.config?.worktreeEnabled ? 'worktree' : ''))
+  const cleanupState = firstNonEmptyString(
+    (session.config as any)?.worktreeCleanupStatus,
+    (session.config as any)?.cleanupStatus,
+    (session.config as any)?.worktreeCleanupState,
+    (session.config as any)?.cleanup,
+  ) || (session.config?.worktreeEnabled ? 'unknown' : '')
+  const fallbackState = firstNonEmptyString(
+    (session.config as any)?.worktreeFallbackStatus,
+    (session.config as any)?.fallbackStatus,
+    (session.config as any)?.worktreeFallbackState,
+    (session.config as any)?.fallbackMode,
+    (session.config as any)?.fallback,
+  ) || (session.config?.worktreeEnabled ? 'unknown' : '')
 
   const [isEditing, setIsEditing] = useState(false)
   const [editName, setEditName] = useState('')
@@ -148,10 +180,29 @@ export const SessionItem = React.memo(function SessionItem({
           <span className="text-[10px] text-text-muted truncate">{getShortPath(dirPath)}</span>
         </div>
       )}
-      {branchName && (
-        <div className="flex items-center gap-1 mb-0.5">
-          <GitBranch className="w-3 h-3 text-text-muted flex-shrink-0" />
-          <span className="text-[10px] text-text-muted truncate">{branchName}</span>
+      {(branchName || workspaceMode || cleanupState || fallbackState) && (
+        <div className="flex items-center gap-1 mb-0.5 flex-wrap">
+          {branchName && (
+            <span className="inline-flex items-center gap-1 px-1 py-0.5 rounded text-[10px] bg-red-500/15 text-red-300 border border-red-500/40 max-w-full">
+              <GitBranch className="w-3 h-3 flex-shrink-0" />
+              <span className="truncate">branch:{branchName}</span>
+            </span>
+          )}
+          {workspaceMode && (
+            <span className="px-1 py-0.5 rounded text-[10px] bg-red-500/15 text-red-300 border border-red-500/40">
+              mode:{workspaceMode}
+            </span>
+          )}
+          {cleanupState && (
+            <span className={`px-1 py-0.5 rounded text-[10px] border ${cleanupState === 'pending' ? 'bg-red-500/20 text-red-200 border-red-500/50' : 'bg-red-500/10 text-red-300 border-red-500/30'}`}>
+              cleanup:{cleanupState}
+            </span>
+          )}
+          {fallbackState && (
+            <span className={`px-1 py-0.5 rounded text-[10px] border ${fallbackState === 'used' ? 'bg-red-500/25 text-red-100 border-red-500/60' : 'bg-red-500/10 text-red-300 border-red-500/30'}`}>
+              fallback:{fallbackState}
+            </span>
+          )}
         </div>
       )}
       {isInterrupted ? (
