@@ -15,6 +15,11 @@ export const IPC = {
   SESSION_ACTIVITY: 'session:activity',
   SESSION_INTERVENTION: 'session:intervention',
 
+  // 内置终端会话（主进程 → 渲染进程）
+  TERMINAL_SESSION_OUTPUT: 'terminal:session-output',
+  TERMINAL_SESSION_STATUS_CHANGE: 'terminal:session-status-change',
+  TERMINAL_SESSION_REMOVED: 'terminal:session-removed',
+
   // 渲染进程 → 主进程 (invoke)
   SESSION_CREATE: 'session:create',
   SESSION_TERMINATE: 'session:terminate',
@@ -32,6 +37,15 @@ export const IPC = {
   SESSION_RENAME: 'session:rename',
   SESSION_AI_RENAME: 'session:ai-rename',
   SESSION_DELETE: 'session:delete',
+
+  // 内置终端会话 API
+  TERMINAL_SESSION_CREATE: 'terminal:create-session',
+  TERMINAL_SESSION_DESTROY: 'terminal:destroy-session',
+  TERMINAL_SESSION_SWITCH: 'terminal:switch-session',
+  TERMINAL_SESSION_GET_ALL: 'terminal:get-all-sessions',
+  TERMINAL_SESSION_GET_OUTPUT: 'terminal:get-output',
+  TERMINAL_SESSION_WRITE_INPUT: 'terminal:write-input',
+  TERMINAL_SESSION_RESIZE: 'terminal:resize',
 
   // SDK V2: 对话 API
   SESSION_SEND_MESSAGE: 'session:send-message',

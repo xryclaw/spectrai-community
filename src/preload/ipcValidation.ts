@@ -116,6 +116,13 @@ const SCHEMAS: Record<string, ArgSchema> = {
   [IPC.SESSION_GET_QUEUE]: [nonEmptyString(128)],
   [IPC.SESSION_CLEAR_QUEUE]: [nonEmptyString(128)],
 
+  [IPC.TERMINAL_SESSION_CREATE]: [optionalObject],
+  [IPC.TERMINAL_SESSION_DESTROY]: [nonEmptyString(128)],
+  [IPC.TERMINAL_SESSION_SWITCH]: [nonEmptyString(128)],
+  [IPC.TERMINAL_SESSION_GET_OUTPUT]: [nonEmptyString(128)],
+  [IPC.TERMINAL_SESSION_WRITE_INPUT]: [nonEmptyString(128), isString],
+  [IPC.TERMINAL_SESSION_RESIZE]: [nonEmptyString(128), integer(20, 400), integer(10, 200)],
+
   [IPC.TASK_CREATE]: [objectArg],
   [IPC.TASK_UPDATE]: [nonEmptyString(128), objectArg],
   [IPC.TASK_DELETE]: [nonEmptyString(128)],

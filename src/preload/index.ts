@@ -215,6 +215,52 @@ contextBridge.exposeInMainWorld('spectrAI', {
     }
   },
 
+  // ==================== Built-in Terminal API ====================
+  terminal: {
+    createSession: (options?: any) =>
+      invokeWithValidation(IPC.TERMINAL_SESSION_CREATE, options || {}),
+
+    destroySession: (sessionId: string) =>
+      invokeWithValidation(IPC.TERMINAL_SESSION_DESTROY, sessionId),
+
+    switchSession: (sessionId: string) =>
+      invokeWithValidation(IPC.TERMINAL_SESSION_SWITCH, sessionId),
+
+    getAllSessions: () =>
+      ipcRenderer.invoke(IPC.TERMINAL_SESSION_GET_ALL),
+
+    getOutput: (sessionId: string) =>
+      ipcRenderer.invoke(IPC.TERMINAL_SESSION_GET_OUTPUT, sessionId),
+
+    writeInput: (sessionId: string, input: string) =>
+      invokeWithValidation(IPC.TERMINAL_SESSION_WRITE_INPUT, sessionId, input),
+
+    resize: (sessionId: string, cols: number, rows: number) =>
+      ipcRenderer.invoke(IPC.TERMINAL_SESSION_RESIZE, sessionId, cols, rows),
+
+    onOutput: (callback: (sessionId: string, chunk: string) => void) => {
+      const listener = (_event: IpcRendererEvent, sessionId: string, chunk: string) => {
+        callback(sessionId, chunk)
+      }
+      ipcRenderer.on(IPC.TERMINAL_SESSION_OUTPUT, listener)
+      return () => ipcRenderer.removeListener(IPC.TERMINAL_SESSION_OUTPUT, listener)
+    },
+
+    onStatusChange: (callback: (sessionId: string, status: string, meta: any) => void) => {
+      const listener = (_event: IpcRendererEvent, sessionId: string, status: string, meta: any) => {
+        callback(sessionId, status, meta)
+      }
+      ipcRenderer.on(IPC.TERMINAL_SESSION_STATUS_CHANGE, listener)
+      return () => ipcRenderer.removeListener(IPC.TERMINAL_SESSION_STATUS_CHANGE, listener)
+    },
+
+    onRemoved: (callback: (sessionId: string) => void) => {
+      const listener = (_event: IpcRendererEvent, sessionId: string) => callback(sessionId)
+      ipcRenderer.on(IPC.TERMINAL_SESSION_REMOVED, listener)
+      return () => ipcRenderer.removeListener(IPC.TERMINAL_SESSION_REMOVED, listener)
+    },
+  },
+
   // ==================== Task API ====================
   task: {
     create: (task: any) => invokeWithValidation(IPC.TASK_CREATE, task),

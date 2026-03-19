@@ -8,6 +8,7 @@ import type { ConcurrencyGuard } from '../session/ConcurrencyGuard'
 import type { NotificationManager } from '../notification/NotificationManager'
 import type { TrayManager } from '../tray/TrayManager'
 import type { SessionManager } from '../session/SessionManager'
+import type { TerminalSessionManager } from '../terminal/TerminalSessionManager'
 import type { OutputParser } from '../parser/OutputParser'
 import type { StateInference } from '../parser/StateInference'
 import type { AgentManager } from '../agent/AgentManager'
@@ -27,6 +28,7 @@ export { sendToRenderer, aiRenamingLocks, performAiRename } from './shared'
  */
 export interface IpcDependencies {
   sessionManager: SessionManager
+  terminalSessionManager?: TerminalSessionManager
   sessionManagerV2?: SessionManagerV2
   database: DatabaseManager
   outputParser: OutputParser
@@ -45,6 +47,7 @@ export interface IpcDependencies {
 
 // 各子模块 handler 注册函数
 import { registerSessionHandlers } from './sessionHandlers'
+import { registerTerminalHandlers } from './terminalHandlers'
 import { registerTaskHandlers } from './taskHandlers'
 import { registerAgentHandlers } from './agentHandlers'
 import { registerProviderHandlers } from './providerHandlers'
@@ -69,6 +72,7 @@ export { wireSessionManagerV2Events } from './systemHandlers'
  */
 export function registerIpcHandlers(deps: IpcDependencies, fileChangeTracker?: FileChangeTracker): void {
   registerSessionHandlers(deps)
+  registerTerminalHandlers(deps)
   registerTaskHandlers(deps)
   registerAgentHandlers(deps)
   registerProviderHandlers(deps)
