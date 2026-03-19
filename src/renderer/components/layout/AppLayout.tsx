@@ -6,7 +6,7 @@
 import { useState, useEffect } from 'react'
 import { Allotment } from 'allotment'
 import 'allotment/dist/style.css'
-import { ChevronLeft, ChevronRight } from 'lucide-react'
+import { ChevronLeft, ChevronRight, TerminalSquare } from 'lucide-react'
 import Sidebar from './Sidebar'
 import MainPanel from './MainPanel'
 import DetailPanel from './DetailPanel'
@@ -19,6 +19,7 @@ import { useUIStore } from '../../stores/uiStore'
 import ActivityBar from './ActivityBar'
 import TitleBar from './TitleBar'
 import UnifiedSettingsModal from '../settings/UnifiedSettingsModal'
+import BottomTerminalDock from './BottomTerminalDock'
 
 export default function AppLayout() {
   const sidebarCollapsed = useUIStore((s) => s.sidebarCollapsed)
@@ -28,6 +29,8 @@ export default function AppLayout() {
   const showSearchPanel = useUIStore((s) => s.showSearchPanel)
   const showHistoryPanel = useUIStore((s) => s.showHistoryPanel)
   const showLogViewer = useUIStore((s) => s.showLogViewer)
+  const terminalDockOpen = useUIStore((s) => s.terminalDockOpen)
+  const toggleTerminalDockOpen = useUIStore((s) => s.toggleTerminalDockOpen)
 
   const [showSettings, setShowSettings] = useState(false)
   const [settingsInitialTab, setSettingsInitialTab] = useState<string | undefined>()
@@ -49,50 +52,67 @@ export default function AppLayout() {
         <ActivityBar onOpenSettings={() => setShowSettings(true)} />
 
         <div className="flex-1 overflow-hidden relative">
-            <Allotment>
-              {!sidebarCollapsed && (
-                <Allotment.Pane preferredSize={280} minSize={200} maxSize={400}>
-                  <Sidebar />
-                </Allotment.Pane>
-              )}
-
-              <Allotment.Pane>
-                <div className="relative h-full">
-                  <MainPanel />
-
-                  <button
-                    onClick={toggleSidebar}
-                    className="panel-toggle-btn left-0 rounded-r-md"
-                    title={sidebarCollapsed ? '展开左侧面板' : '收起左侧面板'}
-                  >
-                    {sidebarCollapsed ? (
-                      <ChevronRight className="w-3.5 h-3.5" />
-                    ) : (
-                      <ChevronLeft className="w-3.5 h-3.5" />
-                    )}
-                  </button>
-
-                  <button
-                    onClick={toggleDetailPanel}
-                    className="panel-toggle-btn right-0 rounded-l-md"
-                    title={detailPanelCollapsed ? '展开右侧面板' : '收起右侧面板'}
-                  >
-                    {detailPanelCollapsed ? (
-                      <ChevronLeft className="w-3.5 h-3.5" />
-                    ) : (
-                      <ChevronRight className="w-3.5 h-3.5" />
-                    )}
-                  </button>
-                </div>
+          <Allotment>
+            {!sidebarCollapsed && (
+              <Allotment.Pane preferredSize={280} minSize={200} maxSize={400}>
+                <Sidebar />
               </Allotment.Pane>
+            )}
 
-              {!detailPanelCollapsed && (
-                <Allotment.Pane preferredSize={300} minSize={200} maxSize={500}>
-                  <DetailPanel />
-                </Allotment.Pane>
-              )}
-            </Allotment>
-          </div>
+            <Allotment.Pane>
+              <div className="relative h-full">
+                <MainPanel />
+
+                <button
+                  onClick={toggleSidebar}
+                  className="panel-toggle-btn left-0 rounded-r-md"
+                  title={sidebarCollapsed ? '展开左侧面板' : '收起左侧面板'}
+                >
+                  {sidebarCollapsed ? (
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  ) : (
+                    <ChevronLeft className="w-3.5 h-3.5" />
+                  )}
+                </button>
+
+                <button
+                  onClick={toggleDetailPanel}
+                  className="panel-toggle-btn right-0 rounded-l-md"
+                  title={detailPanelCollapsed ? '展开右侧面板' : '收起右侧面板'}
+                >
+                  {detailPanelCollapsed ? (
+                    <ChevronLeft className="w-3.5 h-3.5" />
+                  ) : (
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={toggleTerminalDockOpen}
+                  className={[
+                    'absolute left-3 bottom-3 z-40 h-9 px-3 rounded-lg border flex items-center gap-2 text-xs shadow-lg transition-colors',
+                    terminalDockOpen
+                      ? 'bg-accent-blue/20 border-accent-blue/40 text-text-primary'
+                      : 'bg-bg-secondary/95 border-border text-text-secondary hover:bg-bg-hover',
+                  ].join(' ')}
+                  title={terminalDockOpen ? '隐藏底部终端' : '打开底部终端'}
+                >
+                  <TerminalSquare className="w-4 h-4" />
+                  终端
+                </button>
+
+                <BottomTerminalDock />
+              </div>
+            </Allotment.Pane>
+
+            {!detailPanelCollapsed && (
+              <Allotment.Pane preferredSize={300} minSize={200} maxSize={500}>
+                <DetailPanel />
+              </Allotment.Pane>
+            )}
+          </Allotment>
+        </div>
       </div>
 
       <StatusBar />
