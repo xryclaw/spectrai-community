@@ -46,6 +46,30 @@ import { DeleteSessionDialog } from './sidebar/DeleteSessionDialog'
 // 会话列表内容
 // ─────────────────────────────────────────────────────────
 
+type CreateSessionErrorType = 'NOT_GIT_REPO' | 'BRANCH_CONFLICT' | 'PERMISSION_DENIED' | 'UNKNOWN'
+
+function classifyCreateSessionError(message: string): CreateSessionErrorType {
+  const text = (message || '').toLowerCase()
+  if (!text) return 'UNKNOWN'
+  if (text.includes('not_git_repo') || text.includes('not git') || text.includes('git 仓库') || text.includes('不是 git')) {
+    return 'NOT_GIT_REPO'
+  }
+  if (text.includes('branch_conflict') || text.includes('分支') || text.includes('already exists') || text.includes('冲突')) {
+    return 'BRANCH_CONFLICT'
+  }
+  if (text.includes('permission_denied') || text.includes('权限') || text.includes('denied') || text.includes('eacces')) {
+    return 'PERMISSION_DENIED'
+  }
+  return 'UNKNOWN'
+}
+
+function getCreateSessionErrorHint(type: CreateSessionErrorType): string {
+  if (type === 'NOT_GIT_REPO') return '当前目录不是 Git 仓库。请切换到有效仓库目录，或改为普通会话创建。'
+  if (type === 'BRANCH_CONFLICT') return 'Worktree 分支冲突。可先重试自动生成新分支，或改为普通会话创建。'
+  if (type === 'PERMISSION_DENIED') return '权限不足。请检查目录写权限与 Git 权限后重试，或改为普通会话创建。'
+  return '创建会话失败。可直接重试；若持续失败，建议改为普通会话创建。'
+}
+
 export function SessionsContent() {
   const { toggleNewTaskDialog, showNewSessionDialog, setShowNewSessionDialog, toggleSearchPanel, setActivePanelLeft } = useUIStore()
   const { createSession, resumeSession, terminateSession, deleteSession, renameSession, aiRenameSession, sessions, selectSession, selectedSessionId, lastActivities, agents, resumeError, clearResumeError, openSessionForChat } = useSessionStore()
@@ -166,8 +190,11 @@ export function SessionsContent() {
   const [autonomousGoal, setAutonomousGoal] = useState('')
   const [allowedProviderIds, setAllowedProviderIds] = useState<string[]>([])
   const [autoAccept, setAutoAccept] = useState(true)
+  const [useGitWorktree, setUseGitWorktree] = useState(true)
   const [createSessionError, setCreateSessionError] = useState<string | null>(null)
+  const [createSessionErrorType, setCreateSessionErrorType] = useState<CreateSessionErrorType>('UNKNOWN')
   const [isCreatingSession, setIsCreatingSession] = useState(false)
+  const [createSessionSuccessToast, setCreateSessionSuccessToast] = useState<string | null>(null)
   const [recentDirs, setRecentDirs] = useState<Array<{ path: string; isPinned: boolean; useCount: number; lastUsedAt: string }>>([])
   const [providers, setProviders] = useState<AIProvider[]>([])
   const [selectedProviderId, setSelectedProviderId] = useState('')
@@ -177,6 +204,12 @@ export function SessionsContent() {
   const [sessionMode, setSessionMode] = useState<'directory' | 'workspace'>('directory')
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState('')
   const [isWorkspacesLoading, setIsWorkspacesLoading] = useState(false)
+
+  useEffect(() => {
+    if (!createSessionSuccessToast) return
+    const timer = setTimeout(() => setCreateSessionSuccessToast(null), 3500)
+    return () => clearTimeout(timer)
+  }, [createSessionSuccessToast])
 
   // ── 会话右键菜单 ──
   const [contextMenu, setContextMenu] = useState<{
@@ -228,12 +261,14 @@ export function SessionsContent() {
 
   const openNewSessionDialog = async (prefillDir?: string) => {
     setCreateSessionError(null)
+    setCreateSessionErrorType('UNKNOWN')
     setSessionName(`会话 ${new Date().toLocaleTimeString()}`)
     setSessionPrompt('')
     setSelectedProviderId('')
     setSessionModeType('normal')
     setSessionMode('directory')
     setSelectedWorkspaceId('')
+    setUseGitWorktree(true)
     setShowAllDirs(false)
     setIsCreatingSession(false)
     setShowNewSessionDialog(true)
@@ -271,7 +306,7 @@ export function SessionsContent() {
     }
   }
 
-  const handleCreateSession = async () => {
+  const handleCreateSession = async (overrideWorktreeEnabled?: boolean) => {
     if (isCreatingSession) return
     const ws = sessionMode === 'workspace'
       ? workspaces.find(w => w.id === selectedWorkspaceId)
@@ -281,10 +316,19 @@ export function SessionsContent() {
       ? primaryRepo.repoPath
       : (sessionCwd ?? '').trim()
 
+    if (sessionMode === 'workspace' && !primaryRepo) {
+      const msg = '所选工作区没有可用仓库，请先在设置中配置仓库'
+      setCreateSessionError(msg)
+      setCreateSessionErrorType(classifyCreateSessionError(msg))
+      return
+    }
     if (!workingDir) return
 
     const providerId = selectedProviderId || providers[0]?.id || 'claude-code'
+    const worktreeEnabled = typeof overrideWorktreeEnabled === 'boolean' ? overrideWorktreeEnabled : useGitWorktree
+
     setCreateSessionError(null)
+    setCreateSessionErrorType('UNKNOWN')
 
     try {
       setIsCreatingSession(true)
@@ -294,6 +338,7 @@ export function SessionsContent() {
         workingDirectory: workingDir,
         workspaceId: sessionMode === 'workspace' ? selectedWorkspaceId : undefined,
         autoAccept,
+        worktreeEnabled,
         initialPrompt: sessionPrompt.trim() || undefined,
         providerId,
         enableAgent: sessionModeType !== 'normal',
@@ -302,13 +347,24 @@ export function SessionsContent() {
         autonomousGoal: sessionModeType === 'autonomous' ? autonomousGoal.trim() : undefined,
         allowedProviderIds: sessionModeType === 'autonomous' ? allowedProviderIds : undefined,
       })
+      setCreateSessionSuccessToast(worktreeEnabled ? '已启用独立 worktree' : '会话已创建（未启用 worktree）')
       setShowNewSessionDialog(false)
     } catch (error: any) {
-      setCreateSessionError(error?.message || '创建会话失败，请检查 Provider 配置')
+      const message = error?.message || '创建会话失败，请检查 Provider 配置'
+      setCreateSessionError(message)
+      setCreateSessionErrorType(classifyCreateSessionError(message))
       console.error('Failed to create session:', error)
     } finally {
       setIsCreatingSession(false)
     }
+  }
+
+  const handleFallbackCreate = async () => {
+    if (!window.confirm('将改为普通会话创建（不启用 worktree），可能与其他会话共享改动。是否继续？')) {
+      return
+    }
+    setUseGitWorktree(false)
+    await handleCreateSession(false)
   }
 
   const handleSelectDirectory = async () => {
@@ -796,18 +852,42 @@ export function SessionsContent() {
                   )}
                 </div>
               </div>
-              <div className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  id="auto-accept-toggle"
-                  checked={autoAccept}
-                  onChange={e => setAutoAccept(e.target.checked)}
-                  className="rounded border-border accent-accent-blue"
-                />
-                <label htmlFor="auto-accept-toggle" className="text-sm text-text-secondary select-none">
-                  自动接受权限请求
-                </label>
-                <span className="text-[10px] text-text-muted">（--dangerously-skip-permissions）</span>
+              <div className="space-y-1.5">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id="git-worktree-toggle"
+                    checked={useGitWorktree}
+                    onChange={e => setUseGitWorktree(e.target.checked)}
+                    disabled={isCreatingSession}
+                    className="rounded border-border accent-accent-blue disabled:opacity-50"
+                  />
+                  <label htmlFor="git-worktree-toggle" className="text-sm text-text-secondary select-none">
+                    使用 Git Worktree（推荐）
+                  </label>
+                  <span className="text-[10px] text-text-muted">（默认开启）</span>
+                </div>
+                <p className="pl-6 text-[10px] text-text-muted">
+                  为当前会话创建独立代码目录，适合并行开发，避免互相覆盖。
+                </p>
+                {!useGitWorktree && (
+                  <p className="pl-6 text-[10px] text-accent-yellow">
+                    将使用当前仓库目录，可能与其他会话共享改动。
+                  </p>
+                )}
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id="auto-accept-toggle"
+                    checked={autoAccept}
+                    onChange={e => setAutoAccept(e.target.checked)}
+                    className="rounded border-border accent-accent-blue"
+                  />
+                  <label htmlFor="auto-accept-toggle" className="text-sm text-text-secondary select-none">
+                    自动接受权限请求
+                  </label>
+                  <span className="text-[10px] text-text-muted">（--dangerously-skip-permissions）</span>
+                </div>
               </div>
               <div>
                 <label className="block text-sm font-medium text-text-secondary mb-1.5">会话模式</label>
@@ -880,13 +960,34 @@ export function SessionsContent() {
                 )}
               </div>
               {createSessionError && (
-                <div className="text-xs text-accent-red bg-accent-red/10 border border-accent-red/30 rounded px-2.5 py-2">
-                  {createSessionError}
+                <div className="text-xs text-accent-red bg-accent-red/10 border border-accent-red/30 rounded px-2.5 py-2 space-y-2">
+                  <div>{createSessionError}</div>
+                  <div className="text-[11px] text-text-secondary">
+                    {getCreateSessionErrorHint(createSessionErrorType)}
+                  </div>
+                  <div className="flex gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => handleCreateSession()}
+                      disabled={isCreatingSession}
+                      className="px-2 py-1 rounded border border-accent-yellow/40 bg-accent-yellow/15 text-accent-yellow text-[11px] hover:bg-accent-yellow/20 disabled:opacity-50"
+                    >
+                      重试
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleFallbackCreate}
+                      disabled={isCreatingSession}
+                      className="px-2 py-1 rounded border border-border bg-bg-hover text-text-secondary text-[11px] hover:bg-bg-tertiary disabled:opacity-50"
+                    >
+                      改为普通会话创建
+                    </button>
+                  </div>
                 </div>
               )}
               <div className="flex gap-3 pt-2">
                 <button
-                  onClick={handleCreateSession}
+                  onClick={() => handleCreateSession()}
                   disabled={
                     isCreatingSession || (sessionMode === 'workspace'
                       ? !selectedWorkspaceId
@@ -895,7 +996,7 @@ export function SessionsContent() {
                   }
                   className="flex-1 px-4 py-2 text-white rounded font-medium btn-transition hover:bg-opacity-90 disabled:opacity-50 disabled:cursor-not-allowed bg-accent-blue"
                 >
-                  {isCreatingSession ? '创建中...' : '创建'}
+                  {isCreatingSession ? '创建会话中...' : '创建'}
                 </button>
                 <button
                   onClick={() => {
@@ -907,6 +1008,9 @@ export function SessionsContent() {
                   取消
                 </button>
               </div>
+              {isCreatingSession && useGitWorktree && (
+                <p className="text-[11px] text-text-muted">正在创建独立工作目录与分支...</p>
+              )}
             </div>
           </div>
         </div>
@@ -924,6 +1028,17 @@ export function SessionsContent() {
             <span className="text-accent-red font-medium shrink-0">恢复失败</span>
             <span className="text-text-secondary">{resumeError}</span>
             <button onClick={clearResumeError} className="ml-auto shrink-0 text-text-muted hover:text-text-primary">✕</button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Toast：创建会话成功 ── */}
+      {createSessionSuccessToast && (
+        <div className="fixed bottom-4 right-4 z-[100] max-w-sm px-4 py-3 rounded-lg shadow-lg border border-accent-green/30 bg-bg-secondary text-text-primary text-xs animate-in slide-in-from-bottom-2">
+          <div className="flex items-start gap-2">
+            <span className="text-accent-green font-medium shrink-0">创建成功</span>
+            <span className="text-text-secondary">{createSessionSuccessToast}</span>
+            <button onClick={() => setCreateSessionSuccessToast(null)} className="ml-auto shrink-0 text-text-muted hover:text-text-primary">✕</button>
           </div>
         </div>
       )}
