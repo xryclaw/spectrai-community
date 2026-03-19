@@ -215,6 +215,35 @@ export const BUILTIN_PROVIDERS: AIProvider[] = [
 
 export type ShellType = 'powershell' | 'pwsh' | 'cmd'
 
+// ---- 内置终端会话相关 ----
+
+export type TerminalShellType = 'zsh' | 'bash' | 'shell'
+
+export type TerminalSessionStatus = 'starting' | 'running' | 'exited' | 'error'
+
+export interface TerminalSessionCreateOptions {
+  shellType?: TerminalShellType
+  cwd?: string
+  cols?: number
+  rows?: number
+  name?: string
+}
+
+export interface TerminalSessionMeta {
+  id: string
+  name: string
+  shellType: TerminalShellType
+  shellCommand: string
+  cwd: string
+  pid: number
+  status: TerminalSessionStatus
+  createdAt: string
+  updatedAt: string
+  lastActiveAt: string
+  exitCode?: number
+  signal?: number
+}
+
 export interface SessionConfig {
   id: string
   name: string

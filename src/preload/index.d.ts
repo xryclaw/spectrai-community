@@ -110,6 +110,19 @@ export interface SpectrAIAPI {
     onTokenUpdate?: (callback: (sessionId: string, usage: any) => void) => () => void
   }
 
+  terminal: {
+    createSession: (options?: import('../shared/types').TerminalSessionCreateOptions) => Promise<{ success: boolean; session?: import('../shared/types').TerminalSessionMeta; error?: string; code?: string }>
+    destroySession: (sessionId: string) => Promise<{ success: boolean; error?: string; code?: string }>
+    switchSession: (sessionId: string) => Promise<{ success: boolean; session?: import('../shared/types').TerminalSessionMeta; error?: string; code?: string }>
+    getAllSessions: () => Promise<{ success: boolean; sessions?: import('../shared/types').TerminalSessionMeta[]; error?: string; code?: string }>
+    getOutput: (sessionId: string) => Promise<{ success: boolean; chunks?: string[]; error?: string; code?: string }>
+    writeInput: (sessionId: string, input: string) => Promise<{ success: boolean; error?: string; code?: string }>
+    resize: (sessionId: string, cols: number, rows: number) => Promise<{ success: boolean; error?: string; code?: string }>
+    onOutput: (callback: (sessionId: string, chunk: string) => void) => () => void
+    onStatusChange: (callback: (sessionId: string, status: string, meta: import('../shared/types').TerminalSessionMeta) => void) => () => void
+    onRemoved: (callback: (sessionId: string) => void) => () => void
+  }
+
   task: {
     create: (task: any) => Promise<{ success: boolean; taskId?: string }>
     update: (taskId: string, updates: any) => Promise<{ success: boolean }>

@@ -11,6 +11,7 @@ import type { MenuItemConstructorOptions } from 'electron'
 import { join } from 'path'
 import { readFileSync, writeFileSync, existsSync } from 'fs'
 import { SessionManager } from './session/SessionManager'
+import { TerminalSessionManager } from './terminal/TerminalSessionManager'
 import { ConcurrencyGuard } from './session/ConcurrencyGuard'
 import { DatabaseManager } from './storage/Database'
 import { OutputParser } from './parser/OutputParser'
@@ -135,6 +136,7 @@ function scheduleSaveWindowState(win: BrowserWindow): void {
 
 // ---- 核心管理器实例 ----
 let sessionManager: SessionManager
+let terminalSessionManager: TerminalSessionManager
 let concurrencyGuard: ConcurrencyGuard
 let database: DatabaseManager
 let outputParser: OutputParser
@@ -298,6 +300,9 @@ function initializeManagers(): void {
 
   // 2. 会话管理器
   sessionManager = new SessionManager()
+
+  // 2.1 内置终端会话管理器
+  terminalSessionManager = new TerminalSessionManager()
 
   // 3. 并发控制
   concurrencyGuard = new ConcurrencyGuard({ maxSessions: 9 })
@@ -838,6 +843,7 @@ app.whenReady().then(() => {
   // 注册 IPC 处理器（仅传 SDK V2 相关字段，V1 PTY 字段已从 IpcDependencies 移除）
   registerIpcHandlers({
     sessionManager,
+    terminalSessionManager,
     outputParser,
     sessionManagerV2,
     database,
@@ -943,6 +949,7 @@ app.on('before-quit', () => {
 
   // 移除所有事件监听，防止 PTY 异步事件触发数据库写入
   sessionManager.removeAllListeners()
+  terminalSessionManager.removeAllListeners()
   outputParser.removeAllListeners()
   stateInference.removeAllListeners()
   taskCoordinator.removeAllListeners()
@@ -1032,6 +1039,9 @@ app.on('before-quit', () => {
       // 忽略清理错误
     }
   }
+
+  // 清理内置终端会话 PTY
+  terminalSessionManager.cleanup()
 
   // 销毁托盘
   trayManager.destroy()
