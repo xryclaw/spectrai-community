@@ -13,6 +13,8 @@ export type PanelId = 'sessions' | 'explorer' | 'git' | 'dashboard' | 'timeline'
 /** 面板所在侧 */
 export type PanelSide = 'left' | 'right'
 
+export type TerminalDockShell = 'zsh' | 'bash' | 'sh'
+
 /** 向后兼容的类型别名 */
 export type ActivityType = PanelId
 export type RightPanelView = PanelId
@@ -106,6 +108,34 @@ function getInitialLayout(): { viewMode: ViewMode; detailPanelCollapsed: boolean
   return { viewMode, detailPanelCollapsed, sidebarCollapsed }
 }
 
+function getInitialTerminalDockOpen(): boolean {
+  try {
+    return localStorage.getItem('claudeops-terminal-dock-open') === 'true'
+  } catch {
+    return false
+  }
+}
+
+function getInitialTerminalDockCollapsed(): boolean {
+  try {
+    return localStorage.getItem('claudeops-terminal-dock-collapsed') === 'true'
+  } catch {
+    return false
+  }
+}
+
+function getInitialTerminalDockShell(): TerminalDockShell {
+  try {
+    const value = localStorage.getItem('claudeops-terminal-dock-shell')
+    if (value === 'zsh' || value === 'bash' || value === 'sh') {
+      return value
+    }
+  } catch {
+    // ignore
+  }
+  return 'zsh'
+}
+
 /** 保存布局状态到 localStorage */
 function saveLayout(key: string, value: string): void {
   try {
@@ -162,6 +192,13 @@ interface UIState {
   /** 副窗格内容（split 模式下右/下） */
   secondaryPane: PaneContent
 
+  /** 底部终端窗口 */
+  terminalDockOpen: boolean
+  terminalDockCollapsed: boolean
+  terminalDockSessionIds: string[]
+  activeTerminalDockSessionId: string | null
+  terminalDockShell: TerminalDockShell
+
   /** 设置/清除某个会话的草稿输入文本 */
   setDraftInput: (sessionId: string, text: string) => void
 
@@ -192,6 +229,16 @@ interface UIState {
   setPaneContent: (pane: 'primary' | 'secondary', content: PaneContent) => void
   /** 交换两个窗格的内容 */
   swapPanes: () => void
+
+  setTerminalDockOpen: (open: boolean) => void
+  toggleTerminalDockOpen: () => void
+  setTerminalDockCollapsed: (collapsed: boolean) => void
+  toggleTerminalDockCollapsed: () => void
+  addTerminalDockSession: (sessionId: string) => void
+  removeTerminalDockSession: (sessionId: string) => void
+  setActiveTerminalDockSession: (sessionId: string | null) => void
+  setTerminalDockShell: (shell: TerminalDockShell) => void
+  setTerminalDockSessions: (sessionIds: string[]) => void
 }
 
 const initialPanelSides = getInitialPanelSides()
@@ -219,6 +266,12 @@ export const useUIStore = create<UIState>((set) => ({
   layoutMode: (localStorage.getItem('claudeops-layout-mode') as LayoutMode) || 'single',
   primaryPane: (localStorage.getItem('claudeops-pane-primary') as PaneContent) || 'sessions',
   secondaryPane: (localStorage.getItem('claudeops-pane-secondary') as PaneContent) || 'files',
+
+  terminalDockOpen: getInitialTerminalDockOpen(),
+  terminalDockCollapsed: getInitialTerminalDockCollapsed(),
+  terminalDockSessionIds: [],
+  activeTerminalDockSessionId: null,
+  terminalDockShell: getInitialTerminalDockShell(),
 
   // 设置主题
   setTheme: (themeId: string) => {
@@ -365,6 +418,106 @@ export const useUIStore = create<UIState>((set) => ({
       saveLayout('claudeops-pane-primary', state.secondaryPane)
       saveLayout('claudeops-pane-secondary', state.primaryPane)
       return { primaryPane: state.secondaryPane, secondaryPane: state.primaryPane }
+    })
+  },
+
+  setTerminalDockOpen: (open: boolean) => {
+    saveLayout('claudeops-terminal-dock-open', String(open))
+    if (!open) {
+      saveLayout('claudeops-terminal-dock-collapsed', 'false')
+      set({ terminalDockOpen: false, terminalDockCollapsed: false })
+      return
+    }
+    set({ terminalDockOpen: true })
+  },
+
+  toggleTerminalDockOpen: () => {
+    set((state) => {
+      const nextOpen = !state.terminalDockOpen
+      saveLayout('claudeops-terminal-dock-open', String(nextOpen))
+      if (!nextOpen) {
+        saveLayout('claudeops-terminal-dock-collapsed', 'false')
+        return { terminalDockOpen: false, terminalDockCollapsed: false }
+      }
+      saveLayout('claudeops-terminal-dock-collapsed', 'false')
+      return { terminalDockOpen: true, terminalDockCollapsed: false }
+    })
+  },
+
+  setTerminalDockCollapsed: (collapsed: boolean) => {
+    saveLayout('claudeops-terminal-dock-collapsed', String(collapsed))
+    set({ terminalDockCollapsed: collapsed, terminalDockOpen: true })
+  },
+
+  toggleTerminalDockCollapsed: () => {
+    set((state) => {
+      const next = !state.terminalDockCollapsed
+      saveLayout('claudeops-terminal-dock-collapsed', String(next))
+      return { terminalDockCollapsed: next, terminalDockOpen: true }
+    })
+  },
+
+  addTerminalDockSession: (sessionId: string) => {
+    set((state) => {
+      const exists = state.terminalDockSessionIds.includes(sessionId)
+      const nextIds = exists ? state.terminalDockSessionIds : [...state.terminalDockSessionIds, sessionId]
+      saveLayout('claudeops-terminal-dock-open', 'true')
+      saveLayout('claudeops-terminal-dock-collapsed', 'false')
+      return {
+        terminalDockOpen: true,
+        terminalDockCollapsed: false,
+        terminalDockSessionIds: nextIds,
+        activeTerminalDockSessionId: sessionId,
+      }
+    })
+  },
+
+  removeTerminalDockSession: (sessionId: string) => {
+    set((state) => {
+      const nextIds = state.terminalDockSessionIds.filter((id) => id !== sessionId)
+      const nextActive = state.activeTerminalDockSessionId === sessionId
+        ? (nextIds[nextIds.length - 1] ?? null)
+        : state.activeTerminalDockSessionId
+      const nextOpen = nextIds.length > 0 ? state.terminalDockOpen : false
+      if (!nextOpen) {
+        saveLayout('claudeops-terminal-dock-open', 'false')
+        saveLayout('claudeops-terminal-dock-collapsed', 'false')
+      }
+      return {
+        terminalDockSessionIds: nextIds,
+        activeTerminalDockSessionId: nextActive,
+        terminalDockOpen: nextOpen,
+        terminalDockCollapsed: nextOpen ? state.terminalDockCollapsed : false,
+      }
+    })
+  },
+
+  setActiveTerminalDockSession: (sessionId: string | null) => {
+    set({ activeTerminalDockSessionId: sessionId })
+  },
+
+  setTerminalDockShell: (shell: TerminalDockShell) => {
+    saveLayout('claudeops-terminal-dock-shell', shell)
+    set({ terminalDockShell: shell })
+  },
+
+  setTerminalDockSessions: (sessionIds: string[]) => {
+    set((state) => {
+      const nextIds = Array.from(new Set(sessionIds))
+      const nextActive = state.activeTerminalDockSessionId && nextIds.includes(state.activeTerminalDockSessionId)
+        ? state.activeTerminalDockSessionId
+        : (nextIds[0] ?? null)
+      const nextOpen = nextIds.length > 0 ? state.terminalDockOpen : false
+      if (!nextOpen) {
+        saveLayout('claudeops-terminal-dock-open', 'false')
+        saveLayout('claudeops-terminal-dock-collapsed', 'false')
+      }
+      return {
+        terminalDockSessionIds: nextIds,
+        activeTerminalDockSessionId: nextActive,
+        terminalDockOpen: nextOpen,
+        terminalDockCollapsed: nextOpen ? state.terminalDockCollapsed : false,
+      }
     })
   },
 }))
