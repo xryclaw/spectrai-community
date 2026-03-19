@@ -206,6 +206,51 @@ function validateArgs(channel: string, args: unknown[]): string[] {
     }
   }
 
+  if (channel === IPC.TERMINAL_SESSION_CREATE) {
+    const payload = args[0] as {
+      shellType?: unknown
+      cwd?: unknown
+      cols?: unknown
+      rows?: unknown
+      name?: unknown
+    }
+
+    if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
+      if (payload.shellType !== undefined) {
+        const allowedShells = new Set(['zsh', 'bash', 'shell'])
+        if (typeof payload.shellType !== 'string' || !allowedShells.has(payload.shellType)) {
+          errors.push('arg1.shellType must be one of: zsh, bash, shell')
+        }
+      }
+
+      if (payload.cwd !== undefined) {
+        const cwdErr = pathString()(payload.cwd, 'arg1.cwd')
+        if (cwdErr) errors.push(cwdErr)
+      }
+
+      if (payload.cols !== undefined) {
+        const colsErr = integer(20, 400)(payload.cols, 'arg1.cols')
+        if (colsErr) errors.push(colsErr)
+      }
+
+      if (payload.rows !== undefined) {
+        const rowsErr = integer(10, 200)(payload.rows, 'arg1.rows')
+        if (rowsErr) errors.push(rowsErr)
+      }
+
+      if (payload.name !== undefined) {
+        if (typeof payload.name !== 'string') {
+          errors.push('arg1.name must be a string')
+        } else {
+          const name = payload.name.trim()
+          if (!name) errors.push('arg1.name cannot be empty')
+          if (name.length > 64) errors.push('arg1.name is too long (max 64)')
+          if (name.includes('\u0000')) errors.push('arg1.name contains invalid null character')
+        }
+      }
+    }
+  }
+
   return errors
 }
 
