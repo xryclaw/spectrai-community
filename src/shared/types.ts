@@ -221,6 +221,8 @@ export interface SessionConfig {
   workingDirectory: string
   claudeArgs?: string[]
   autoAccept?: boolean
+  /** 当前会话是否启用 Git Worktree 隔离（undefined 时回退全局 autoWorktree） */
+  worktreeEnabled?: boolean
   env?: Record<string, string>
   taskId?: string
   initialPrompt?: string   // 创建会话后自动发送的初始 prompt
@@ -246,6 +248,12 @@ export interface SessionConfig {
   worktreeBranchCommit?: string
   /** worktree 来源仓库根路径（用于清理时定位） */
   worktreeSourceRepo?: string
+  /** worktree 会话模式（single/workspace） */
+  worktreeWorkspaceMode?: 'single' | 'workspace'
+  /** worktree 清理状态（ok/pending） */
+  worktreeCleanupState?: 'ok' | 'pending'
+  /** worktree fallback 状态（disabled/not_used/used） */
+  worktreeFallbackState?: 'disabled' | 'not_used' | 'used'
   /** 关联的工作区 ID（新建会话时选择工作区模式时传入） */
   workspaceId?: string
   /** 工作区内除主仓库外的其他仓库路径（传递给 SDK additionalDirectories，让 AI 可访问多个目录） */

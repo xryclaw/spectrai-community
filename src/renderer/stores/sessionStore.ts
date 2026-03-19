@@ -277,6 +277,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       config.providerId || '',
       config.workspaceId || '',
       config.supervisorMode ? '1' : '0',
+      config.worktreeEnabled ? '1' : '0',
       (config.initialPrompt || '').trim(),
       (config.name || '').trim(),
     ].join('|')

@@ -1,0 +1,46 @@
+{
+  "meta": {
+    "suite": "worktree-integration",
+    "createdAt": "2026-03-19",
+    "purpose": "Joint test data for worktree option default behavior, isolation, branch flow, and failure recovery"
+  },
+  "baseBranchCandidates": [
+    "main",
+    "master"
+  ],
+  "baseBranchFallback": "current HEAD branch",
+  "sessionTemplates": [
+    {
+      "sessionName": "QA-WT-A",
+      "branchPrefix": "feat/qa-wt-a",
+      "worktreeDirPrefix": ".qa-worktrees/wt-a",
+      "probeFile": "qa/probe-a.txt",
+      "commitMessage": "test(worktree): probe commit A"
+    },
+    {
+      "sessionName": "QA-WT-B",
+      "branchPrefix": "feat/qa-wt-b",
+      "worktreeDirPrefix": ".qa-worktrees/wt-b",
+      "probeFile": "qa/probe-b.txt",
+      "commitMessage": "test(worktree): probe commit B"
+    }
+  ],
+  "uiCases": [
+    {
+      "caseId": "WT-001",
+      "title": "Default checked",
+      "worktreeEnabled": true
+    },
+    {
+      "caseId": "WT-002",
+      "title": "Manual uncheck",
+      "worktreeEnabled": false
+    }
+  ],
+  "assertions": {
+    "isolation": "Uncommitted/staged changes from session A must not appear in session B",
+    "branchFlow": "Session commits must be on dedicated branch instead of base branch",
+    "mergePath": "Feature branches can be merged back to base with traceable commits",
+    "recovery": "Failure must leave clear logs and no unrecoverable half-created state"
+  }
+}

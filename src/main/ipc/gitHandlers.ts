@@ -4,6 +4,7 @@
 import { ipcMain } from 'electron'
 import { IPC } from '../../shared/constants'
 import { GitWorktreeService } from '../git/GitWorktreeService'
+import { WorktreeRiskGuard } from '../git/WorktreeRiskGuard'
 import type { IpcDependencies } from './index'
 import type { FileChangeTracker } from '../tracker/FileChangeTracker'
 
@@ -11,6 +12,7 @@ export function registerGitHandlers(deps: IpcDependencies, fileChangeTracker?: F
   // ==================== Git / Worktree ====================
 
   const gitService = new GitWorktreeService()
+  const worktreeRiskGuard = WorktreeRiskGuard.getInstance()
 
   ipcMain.handle(IPC.GIT_IS_REPO, async (_event, dirPath: string) => {
     try {
@@ -212,6 +214,14 @@ export function registerGitHandlers(deps: IpcDependencies, fileChangeTracker?: F
 
   ipcMain.handle(IPC.WORKTREE_MERGE, async (_event, repoPath: string, branchName: string, options?: { squash?: boolean; message?: string; cleanup?: boolean }) => {
     try {
+      const mergeGate = worktreeRiskGuard.assertMergeAllowed('IPC.WORKTREE_MERGE')
+      if (!mergeGate.allowed) {
+        return {
+          success: false,
+          error: `Worktree merge 已暂停：${mergeGate.reason || '风险阈值触发'}；触发时间=${mergeGate.triggerAt || 'unknown'}；阈值=${mergeGate.threshold || 'unknown'}；影响范围=${mergeGate.impactScope || 'Worktree merge'}；恢复条件=${mergeGate.recoveryCondition || '风险指标恢复'}`,
+        }
+      }
+
       const result = await gitService.mergeToMain(repoPath, branchName, options)
 
       // ★ 记录 worktree 改动文件（在 cleanup 之前，确保 worktreePath 还有效）

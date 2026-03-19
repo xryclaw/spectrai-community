@@ -25,7 +25,8 @@
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
     "test": "node --test --experimental-strip-types tests/*.test.ts",
     "test:gate2:p0": "node --test --experimental-strip-types tests/gate2*.test.ts tests/ipcCriticalPath.test.ts tests/ipcFailurePathContract.test.ts tests/ipcErrorCodeConsistency.test.ts tests/typeContractBoundary.test.ts tests/preloadTypeContract.test.ts",
-    "test:ci": "npm run test"
+    "test:ci": "npm run test",
+    "db:migration:rollback": "node scripts/db-migration-rollback.mjs --from 999 --to 998"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.62",

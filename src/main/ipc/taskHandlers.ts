@@ -6,13 +6,149 @@ import { IPC } from '../../shared/constants'
 import { BUILTIN_CLAUDE_PROVIDER } from '../../shared/types'
 import type { AIProvider, SessionConfig } from '../../shared/types'
 import { GitWorktreeService } from '../git/GitWorktreeService'
-import { injectWorkspaceSection } from '../agent/supervisorPrompt'
+import { WorktreeRiskGuard } from '../git/WorktreeRiskGuard'
+import {
+  scheduleCleanupCompensation,
+  withRepoProvisionCleanupLock,
+} from '../git/WorktreeSessionSafety'
+import {
+  buildWorktreeAlreadyActivePrompt,
+  injectWorkspaceSection,
+  injectWorktreeAlreadyActiveRule,
+  injectWorktreeAlreadyActiveToAgentsMd,
+  injectWorktreeAlreadyActiveToGeminiMd,
+} from '../agent/supervisorPrompt'
 import { v4 as uuidv4 } from 'uuid'
 import type { IpcDependencies } from './index'
 import { failInternalResult, failResult, IPC_ERROR_CODES } from './errorResult'
 
+type RepoDescriptor = {
+  id: string
+  repoPath: string
+  isPrimary: boolean
+  name?: string
+}
+
+function sanitizeToken(value: unknown, fallback: string, maxLength = 48): string {
+  const raw = typeof value === 'string' ? value : ''
+  const sanitized = raw
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, maxLength)
+  return sanitized || fallback
+}
+
+function normalizeBranchBase(task: any): string {
+  const titleToken = sanitizeToken(task?.title || '', 'task', 40)
+  const taskToken = sanitizeToken(task?.id || '', 'task', 12)
+  const fallback = `task/${titleToken || taskToken}`
+
+  const raw = typeof task?.gitBranch === 'string' && task.gitBranch.trim()
+    ? task.gitBranch.trim().toLowerCase()
+    : fallback
+
+  const normalized = raw
+    .replace(/[^a-z0-9/_-]+/g, '-')
+    .replace(/\/+/g, '/')
+    .replace(/-{2,}/g, '-')
+    .replace(/^[-/]+|[-/]+$/g, '')
+
+  if (!normalized) return fallback
+  return normalized.includes('/') ? normalized.slice(0, 120) : `task/${normalized.slice(0, 110)}`
+}
+
+async function resolveSharedBranchName(
+  gitService: GitWorktreeService,
+  repos: RepoDescriptor[],
+  preferredBranch: string,
+  uniqueSeed: string,
+): Promise<string> {
+  const candidates = [preferredBranch, `${preferredBranch}-${uniqueSeed}`]
+
+  for (const candidate of candidates) {
+    const existsList = await Promise.all(repos.map(r => gitService.branchExists(r.repoPath, candidate)))
+    if (existsList.every(exists => !exists)) {
+      return candidate
+    }
+  }
+
+  for (let i = 1; i <= 1000; i++) {
+    const candidate = `${preferredBranch}-${uniqueSeed}-${i}`
+    const existsList = await Promise.all(repos.map(r => gitService.branchExists(r.repoPath, candidate)))
+    if (existsList.every(exists => !exists)) {
+      return candidate
+    }
+  }
+
+  throw new Error(`无法为分支 ${preferredBranch} 生成唯一名称，请稍后重试`)
+}
+
+type CleanupFailure = {
+  key: string
+  repoId?: string
+  repoPath: string
+  worktreePath: string
+  branchName?: string
+  reason: string
+}
+
+async function cleanupTaskWorktreesBestEffort(task: any, database: any, gitService: GitWorktreeService): Promise<CleanupFailure[]> {
+  const failures: CleanupFailure[] = []
+  if (!task?.worktreeEnabled) return failures
+
+  if (task.workspaceId && task.worktreePaths) {
+    const workspace = database.getWorkspace(task.workspaceId)
+    if (!workspace?.repos?.length) return failures
+
+    await Promise.all(
+      workspace.repos.map(async (repo: any) => {
+        const wtp = task.worktreePaths?.[repo.id]
+        if (!wtp) return
+        try {
+          await gitService.removeWorktree(repo.repoPath, wtp, {
+            deleteBranch: true,
+            branchName: task.gitBranch,
+          })
+        } catch (err: any) {
+          failures.push({
+            key: `${task.id}:${repo.repoPath}:${wtp}`,
+            repoId: String(repo.id),
+            repoPath: repo.repoPath,
+            worktreePath: wtp,
+            branchName: task.gitBranch,
+            reason: err?.message || 'cleanup failed',
+          })
+        }
+      })
+    )
+    return failures
+  }
+
+  if (task.worktreePath && task.gitRepoPath) {
+    try {
+      await gitService.removeWorktree(task.gitRepoPath, task.worktreePath, {
+        deleteBranch: true,
+        branchName: task.gitBranch,
+      })
+    } catch (err: any) {
+      failures.push({
+        key: `${task.id}:${task.gitRepoPath}:${task.worktreePath}`,
+        repoPath: task.gitRepoPath,
+        worktreePath: task.worktreePath,
+        branchName: task.gitBranch,
+        reason: err?.message || 'cleanup failed',
+      })
+    }
+  }
+
+  return failures
+}
+
 export function registerTaskHandlers(deps: IpcDependencies): void {
   const { database, sessionManagerV2, concurrencyGuard, taskCoordinator } = deps
+  const riskGuard = WorktreeRiskGuard.getInstance()
+  const worktreeFallbackMode = (process.env.WORKTREE_FALLBACK_MODE || 'disabled').toLowerCase()
 
   // ==================== Task 相关 ====================
 
@@ -31,78 +167,6 @@ export function registerTaskHandlers(deps: IpcDependencies): void {
         gitRepoPath: task.gitRepoPath,
         gitBranch: task.gitBranch,
         workspaceId: task.workspaceId,
-      }
-
-      const gitService = new GitWorktreeService()
-
-      // 路径1：工作区多仓库 worktree 创建
-      if (taskData.worktreeEnabled && taskData.workspaceId && taskData.gitBranch) {
-        const workspace = database.getWorkspace(taskData.workspaceId)
-        if (!workspace) {
-          return failResult(IPC_ERROR_CODES.NOT_FOUND, '工作区不存在')
-        }
-
-        const worktreePaths: Record<string, string> = {}
-
-        try {
-          const results = await Promise.allSettled(
-            workspace.repos.map(async (repo: any) => {
-              const result = await gitService.createWorktree(repo.repoPath, taskData.gitBranch, taskId)
-              return { repoId: repo.id, worktreePath: result.worktreePath, branch: result.branch }
-            })
-          )
-
-          // 先收集所有成功的 worktree（确保失败时能完整回滚）
-          const failures: string[] = []
-          for (const result of results) {
-            if (result.status === 'fulfilled') {
-              worktreePaths[result.value.repoId] = result.value.worktreePath
-            } else {
-              failures.push(result.reason?.message || '未知错误')
-            }
-          }
-
-          // 有任意一个失败 → 抛出错误，触发 catch 块统一回滚所有已成功的
-          if (failures.length > 0) {
-            throw new Error(failures.join('; '))
-          }
-
-          taskData.worktreePaths = worktreePaths
-
-          // 分支名以 primary 仓库的实际分支为准
-          const primaryRepo = workspace.repos.find((r: any) => r.isPrimary) ?? workspace.repos[0]
-          const primaryResult = results.find(
-            r => r.status === 'fulfilled' && (r as any).value.repoId === primaryRepo?.id
-          )
-          if (primaryResult?.status === 'fulfilled') {
-            taskData.gitBranch = (primaryResult as any).value.branch
-          }
-        } catch (wtErr: any) {
-          // 回滚：清理已创建的 worktrees
-          for (const repo of workspace.repos) {
-            const wtp = worktreePaths[(repo as any).id]
-            if (wtp) {
-              try { await gitService.removeWorktree((repo as any).repoPath, wtp) } catch (_) {}
-            }
-          }
-          console.error('[IPC] Multi-repo worktree creation failed:', wtErr)
-          return failResult(IPC_ERROR_CODES.EXTERNAL_OPERATION_FAILED, `多仓库 Worktree 创建失败: ${wtErr.message}`)
-        }
-      }
-      // 路径2：单仓库 worktree 创建（向后兼容）
-      else if (taskData.worktreeEnabled && taskData.gitRepoPath && taskData.gitBranch) {
-        try {
-          const result = await gitService.createWorktree(
-            taskData.gitRepoPath,
-            taskData.gitBranch,
-            taskId
-          )
-          taskData.worktreePath = result.worktreePath
-          taskData.gitBranch = result.branch
-        } catch (wtErr: any) {
-          console.error('[IPC] Worktree creation failed:', wtErr)
-          return failResult(IPC_ERROR_CODES.EXTERNAL_OPERATION_FAILED, `Worktree 创建失败: ${wtErr.message}`)
-        }
       }
 
       const created = database.createTask(taskData)
@@ -197,44 +261,212 @@ export function registerTaskHandlers(deps: IpcDependencies): void {
         return failResult(IPC_ERROR_CODES.RESOURCE_EXHAUSTED, resourceCheck.reason || '资源不足，无法创建新会话')
       }
 
+      const sessionId = uuidv4()
+      const gitServiceForSession = new GitWorktreeService()
+
       let workDir = config?.workingDirectory || process.cwd()
       let activeWorktreePath: string | undefined
       let activeWorktreeSourceRepo: string | undefined
-      const gitServiceForSession = new GitWorktreeService()
+      let activeWorktreeBranch: string | undefined
+      let activeWorktreeBaseBranch: string | undefined
+      let activeWorktreeBaseCommit: string | undefined
+      let createdWorktreePaths: Record<string, string> | undefined
+      let worktreeCleanupState: 'ok' | 'pending' = 'ok'
+      let worktreeFallbackState: 'disabled' | 'not_used' | 'used' = worktreeFallbackMode === 'disabled' ? 'disabled' : 'not_used'
 
-      // workDir 决策：优先工作区多仓库（取 primary 仓库的 worktree 路径）
-      if (task.worktreeEnabled && task.workspaceId && task.worktreePaths) {
-        const workspace = database.getWorkspace(task.workspaceId)
-        const primaryRepo = workspace?.repos.find((r: any) => r.isPrimary) ?? workspace?.repos[0]
-        if (primaryRepo) {
-          const primaryWorktreePath = task.worktreePaths[(primaryRepo as any).id]
-          if (primaryWorktreePath) {
-            const healthy = await gitServiceForSession.verifyWorktree(primaryWorktreePath)
-            if (healthy) {
-              workDir = primaryWorktreePath
-              activeWorktreePath = primaryWorktreePath
-              activeWorktreeSourceRepo = (primaryRepo as any).repoPath
-            } else {
-              console.warn(`[IPC] Primary worktree unhealthy: ${primaryWorktreePath}, falling back to repo`)
-              workDir = (primaryRepo as any).repoPath || workDir
-            }
+      if (task.worktreeEnabled) {
+        const repos: RepoDescriptor[] = []
+
+        if (task.workspaceId) {
+          const workspace = database.getWorkspace(task.workspaceId)
+          if (!workspace?.repos?.length) {
+            return failResult(IPC_ERROR_CODES.NOT_FOUND, '工作区不存在或未配置仓库')
           }
-        }
-      }
-      // 回退：单仓库 worktree（向后兼容）
-      else if (task.worktreeEnabled && task.worktreePath) {
-        const healthy = await gitServiceForSession.verifyWorktree(task.worktreePath)
-        if (healthy) {
-          workDir = task.worktreePath
-          activeWorktreePath = task.worktreePath
-          activeWorktreeSourceRepo = task.gitRepoPath || undefined
+          for (const repo of workspace.repos) {
+            repos.push({
+              id: String(repo.id),
+              repoPath: String(repo.repoPath),
+              isPrimary: !!repo.isPrimary,
+              name: repo.name,
+            })
+          }
+        } else if (task.gitRepoPath) {
+          repos.push({ id: 'single', repoPath: task.gitRepoPath, isPrimary: true, name: 'repo' })
         } else {
-          console.warn(`[IPC] Worktree unhealthy: ${task.worktreePath}, falling back to ${task.gitRepoPath || workDir}`)
-          workDir = task.gitRepoPath || workDir
+          return failResult(IPC_ERROR_CODES.INVALID_ARGUMENT, '任务已启用 Worktree，但未配置仓库路径')
+        }
+
+        const primaryRepo = repos.find(r => r.isPrimary) || repos[0]
+        const preferredBranch = normalizeBranchBase(task)
+        const uniqueSeed = sanitizeToken(`${sessionId.slice(0, 8)}-${Date.now().toString(36)}`, sessionId.slice(0, 8), 24)
+
+        try {
+          await withRepoProvisionCleanupLock(
+            repos.map(r => r.repoPath),
+            async () => {
+              const cleanupFailures = await cleanupTaskWorktreesBestEffort(task, database, gitServiceForSession)
+              if (cleanupFailures.length > 0) {
+                worktreeCleanupState = 'pending'
+                for (const failure of cleanupFailures) {
+                  scheduleCleanupCompensation({
+                    key: failure.key,
+                    reason: failure.reason,
+                    run: async () => {
+                      await gitServiceForSession.removeWorktree(failure.repoPath, failure.worktreePath, {
+                        deleteBranch: true,
+                        branchName: failure.branchName,
+                      })
+                    },
+                  })
+                }
+              }
+
+              const createdByRepoPath = new Map<string, { worktreePath: string; branchName: string; repoId: string }>()
+              let resolvedSessionBranch: string | undefined
+              try {
+                activeWorktreeBaseBranch = await gitServiceForSession.getCurrentBranch(primaryRepo.repoPath)
+                activeWorktreeBaseCommit = await gitServiceForSession.getHeadCommit(primaryRepo.repoPath)
+
+                const resolvedBranch = await resolveSharedBranchName(
+                  gitServiceForSession,
+                  repos,
+                  preferredBranch,
+                  uniqueSeed,
+                )
+                resolvedSessionBranch = resolvedBranch
+
+                const nextWorktreePaths: Record<string, string> = {}
+
+                for (const repo of repos) {
+                  const scopedTaskId = sanitizeToken(
+                    `${taskId}-${sessionId.slice(0, 8)}-${repo.id}`,
+                    `${taskId}-${sessionId.slice(0, 8)}`,
+                    96,
+                  )
+                  const result = await gitServiceForSession.createIsolatedWorktree(
+                    repo.repoPath,
+                    resolvedBranch,
+                    scopedTaskId,
+                    uniqueSeed,
+                  )
+
+                  nextWorktreePaths[repo.id] = result.worktreePath
+                  createdByRepoPath.set(repo.repoPath, {
+                    worktreePath: result.worktreePath,
+                    branchName: result.branch,
+                    repoId: repo.id,
+                  })
+                }
+
+                activeWorktreePath = nextWorktreePaths[primaryRepo.id]
+                activeWorktreeSourceRepo = primaryRepo.repoPath
+                activeWorktreeBranch = resolvedBranch
+                createdWorktreePaths = nextWorktreePaths
+                workDir = activeWorktreePath || primaryRepo.repoPath || workDir
+
+                if (task.workspaceId) {
+                  database.updateTask(taskId, {
+                    gitBranch: resolvedBranch,
+                    worktreePaths: nextWorktreePaths,
+                    worktreePath: activeWorktreePath,
+                  })
+                } else {
+                  database.updateTask(taskId, {
+                    gitBranch: resolvedBranch,
+                    worktreePath: activeWorktreePath,
+                    worktreePaths: null as any,
+                  })
+                }
+              } catch (wtErr: any) {
+                const rollbackFailures: CleanupFailure[] = []
+
+                await Promise.allSettled(
+                  repos.map(async repo => {
+                    const created = createdByRepoPath.get(repo.repoPath)
+                    if (!created) return
+                    const rollbackBranch = created.branchName || resolvedSessionBranch || activeWorktreeBranch || undefined
+                    try {
+                      await gitServiceForSession.removeWorktree(repo.repoPath, created.worktreePath, {
+                        deleteBranch: true,
+                        branchName: rollbackBranch,
+                      })
+                    } catch (rollbackErr: any) {
+                      rollbackFailures.push({
+                        key: `${taskId}:${repo.repoPath}:${created.worktreePath}`,
+                        repoId: created.repoId,
+                        repoPath: repo.repoPath,
+                        worktreePath: created.worktreePath,
+                        branchName: rollbackBranch,
+                        reason: rollbackErr?.message || 'rollback cleanup failed',
+                      })
+                    }
+                  })
+                )
+
+                if (rollbackFailures.length > 0) {
+                  worktreeCleanupState = 'pending'
+
+                  for (const failure of rollbackFailures) {
+                    scheduleCleanupCompensation({
+                      key: failure.key,
+                      reason: failure.reason,
+                      run: async () => {
+                        await gitServiceForSession.removeWorktree(failure.repoPath, failure.worktreePath, {
+                          deleteBranch: true,
+                          branchName: failure.branchName,
+                        })
+                      },
+                    })
+                  }
+
+                  if (task.workspaceId) {
+                    const pendingWorktreePaths: Record<string, string> = {}
+                    for (const failure of rollbackFailures) {
+                      if (failure.repoId) {
+                        pendingWorktreePaths[failure.repoId] = failure.worktreePath
+                      }
+                    }
+                    database.updateTask(taskId, {
+                      gitBranch: resolvedSessionBranch || task.gitBranch,
+                      worktreePaths: pendingWorktreePaths,
+                      worktreePath: pendingWorktreePaths[primaryRepo.id] || '',
+                    })
+                  } else {
+                    const primaryFailure = rollbackFailures[0]
+                    database.updateTask(taskId, {
+                      gitBranch: primaryFailure?.branchName || resolvedSessionBranch || task.gitBranch,
+                      worktreePath: primaryFailure?.worktreePath || '',
+                      worktreePaths: null as any,
+                    })
+                  }
+                }
+
+                throw wtErr
+              }
+            }
+          )
+        } catch (wtErr: any) {
+          riskGuard.recordProvisionFailure(String(wtErr?.message || wtErr || 'unknown'))
+
+          // 联调期风险防护：默认关闭自动 fallback，避免在主仓直接继续导致污染。
+          // 若设置为 approve，仍不自动执行 fallback，改为显式失败等待上层审批流程。
+          if (worktreeFallbackMode !== 'disabled') {
+            worktreeFallbackState = 'used'
+            riskGuard.recordFallbackAttempt(true)
+            return failResult(IPC_ERROR_CODES.EXTERNAL_OPERATION_FAILED, 'Worktree 创建失败，fallback 需审批后执行')
+          }
+
+          worktreeFallbackState = 'disabled'
+          riskGuard.recordFallbackAttempt(false)
+          console.error('[IPC] Session worktree creation failed:', wtErr)
+          return failResult(IPC_ERROR_CODES.EXTERNAL_OPERATION_FAILED, `会话 Worktree 创建失败: ${wtErr.message || '未知错误'}`)
         }
       }
 
-      const sessionId = uuidv4()
+      if (task.worktreeEnabled && worktreeFallbackMode === 'disabled') {
+        riskGuard.recordFallbackAttempt(false)
+      }
+
       const provider: AIProvider = database.getProvider(config?.providerId || 'claude-code') || BUILTIN_CLAUDE_PROVIDER
       const sessionConfig: SessionConfig = {
         id: sessionId,
@@ -247,23 +479,46 @@ export function registerTaskHandlers(deps: IpcDependencies): void {
         ...config,
         workingDirectory: workDir,
       }
+
       if (activeWorktreePath) {
         sessionConfig.worktreePath = activeWorktreePath
-        sessionConfig.worktreeBranch = task.gitBranch || undefined
+        sessionConfig.worktreeBranch = activeWorktreeBranch
         sessionConfig.worktreeSourceRepo = activeWorktreeSourceRepo
+        sessionConfig.worktreeBaseBranch = activeWorktreeBaseBranch
+        sessionConfig.worktreeBaseCommit = activeWorktreeBaseCommit
+        ;(sessionConfig as any).worktreeWorkspaceMode = task.workspaceId ? 'workspace' : 'single'
+        ;(sessionConfig as any).worktreeCleanupState = worktreeCleanupState
+        ;(sessionConfig as any).worktreeFallbackState = worktreeFallbackState
+
+        try {
+          if (provider.id === 'claude-code') {
+            injectWorktreeAlreadyActiveRule(workDir, activeWorktreeBranch)
+          } else if (provider.id === 'codex') {
+            injectWorktreeAlreadyActiveToAgentsMd(workDir, activeWorktreeBranch)
+          } else if (provider.id === 'gemini-cli') {
+            injectWorktreeAlreadyActiveToGeminiMd(workDir, activeWorktreeBranch)
+          } else {
+            const prompt = buildWorktreeAlreadyActivePrompt(activeWorktreeBranch)
+            sessionConfig.systemPromptAppend = sessionConfig.systemPromptAppend
+              ? `${sessionConfig.systemPromptAppend}\n\n${prompt}`
+              : prompt
+          }
+        } catch (injectErr: any) {
+          console.warn('[IPC] Failed to inject already-active worktree rule:', injectErr.message)
+        }
       }
 
       sessionManagerV2?.createSession(sessionConfig, provider)
       concurrencyGuard.registerSession()
 
       // 注入 Workspace 多仓库上下文（追加到 .claude/rules/spectrai-session.md）
-      if (task.workspaceId && task.worktreePaths) {
+      if (task.workspaceId && createdWorktreePaths) {
         try {
           const workspace = database.getWorkspace(task.workspaceId)
           if (workspace) {
             const reposForSection = workspace.repos.map((r: any) => ({
               name: r.name,
-              worktreePath: task.worktreePaths![r.id] || r.repoPath,
+              worktreePath: createdWorktreePaths?.[r.id] || r.repoPath,
               isPrimary: r.isPrimary,
             }))
             injectWorkspaceSection(workDir, reposForSection)
@@ -281,7 +536,7 @@ export function registerTaskHandlers(deps: IpcDependencies): void {
         estimatedTokens: 0,
         config: sessionConfig,
         taskId,
-        providerId: provider.id
+        providerId: provider.id,
       })
 
       database.recordDirectoryUsage(sessionConfig.workingDirectory)
@@ -293,7 +548,13 @@ export function registerTaskHandlers(deps: IpcDependencies): void {
         }
       }
 
-      return { success: true, sessionId, reused: false }
+      return {
+        success: true,
+        sessionId,
+        reused: false,
+        worktreePath: sessionConfig.worktreePath,
+        worktreeBranch: sessionConfig.worktreeBranch,
+      }
     } catch (error: any) {
       console.error('[IPC] TASK_START_SESSION error:', error)
       return failInternalResult(error)

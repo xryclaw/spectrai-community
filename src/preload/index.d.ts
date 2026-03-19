@@ -60,7 +60,7 @@ export interface SpectrAIAPI {
   }
 
   session: {
-    create: (config: any) => Promise<{ success: boolean; sessionId?: string; ready?: boolean; status?: string; error?: string }>
+    create: (config: any) => Promise<{ success: boolean; sessionId?: string; ready?: boolean; status?: string; error?: string; workspaceMeta?: { mode: 'single' | 'workspace'; worktreePath: string; branch: string; baseBranch: string; fallbackState: 'disabled' | 'not_used' | 'used' } }>
     terminate: (sessionId: string) => Promise<{ success: boolean; error?: string }>
     sendInput: (sessionId: string, input: string) => Promise<{ success: boolean }>
     confirm: (sessionId: string, confirmed: boolean) => Promise<{ success: boolean }>
@@ -115,7 +115,7 @@ export interface SpectrAIAPI {
     update: (taskId: string, updates: any) => Promise<{ success: boolean }>
     delete: (taskId: string) => Promise<{ success: boolean }>
     getAll: () => Promise<any[]>
-    startSession: (taskId: string, config?: any) => Promise<{ success: boolean; sessionId?: string; reused?: boolean; error?: string }>
+    startSession: (taskId: string, config?: any) => Promise<{ success: boolean; sessionId?: string; reused?: boolean; worktreePath?: string; worktreeBranch?: string; error?: string }>
     onStatusChange: (callback: (taskId: string, updates: any) => void) => () => void
   }
 

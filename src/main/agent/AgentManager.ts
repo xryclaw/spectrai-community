@@ -16,6 +16,7 @@ import type { AgentConfig, AgentInfo, AgentResult, BridgeRequest, BridgeResponse
 import { BUILTIN_PROVIDERS } from '../../shared/types'
 import type { AIProvider } from '../../shared/types'
 import { GitWorktreeService } from '../git/GitWorktreeService'
+import { WorktreeRiskGuard } from '../git/WorktreeRiskGuard'
 import { TailBuffer, stripAnsi, compilePromptMarkers, looksLikeThinking } from './ansiUtils'
 import { HeadlessTerminalBuffer } from './HeadlessTerminalBuffer'
 import { AgentReadinessDetector, type DetectorConfig } from './AgentReadinessDetector'
@@ -47,6 +48,7 @@ export class AgentManager extends EventEmitter {
   private database: DatabaseManager
   private deps: AgentManagerDeps
   private defaultGitWorktreeService = new GitWorktreeService()
+  private worktreeRiskGuard = WorktreeRiskGuard.getInstance()
   /** agentId → 等待进程退出的 resolve 回调 */
   private waiters: Map<string, Array<{ resolve: (result: AgentResult) => void; timer?: NodeJS.Timeout }>> = new Map()
   /** agentId → 等待空闲(prompt marker)的 resolve 回调 */
@@ -1426,7 +1428,7 @@ export class AgentManager extends EventEmitter {
     const defaultToken = `${sessionId.slice(0, 8)}-${nowTag}`
     const nameToken = this.sanitizeWorktreeToken(params.worktreeName ?? params.taskId, defaultToken, 48)
     const defaultBranch = `worktree/${nameToken}`
-    const branchName = typeof params.branchName === 'string' && params.branchName.trim()
+    const preferredBranch = typeof params.branchName === 'string' && params.branchName.trim()
       ? params.branchName.trim()
       : defaultBranch
 
@@ -1443,7 +1445,12 @@ export class AgentManager extends EventEmitter {
           worktreePath: expectedPath,
           branch: await gitService.getCurrentBranch(expectedPath),
         }
-      : await gitService.createWorktree(repoPath, branchName, taskId)
+      : await gitService.createIsolatedWorktree(
+          repoPath,
+          preferredBranch,
+          taskId,
+          this.sanitizeWorktreeToken(`${sessionId.slice(0, 8)}-${nowTag}`, sessionId.slice(0, 8), 24),
+        )
 
     // 记录 worktree 创建时的 base commit，用于合并后仍能查看差异
     let baseCommit = ''
@@ -1711,6 +1718,18 @@ export class AgentManager extends EventEmitter {
           }
           if (!repoPath || !branchName) { respond({ id, error: '缺少 repoPath 和 branchName（或提供 taskId）' }); break }
           try {
+            const mergeGate = this.worktreeRiskGuard.assertMergeAllowed('AgentManager.merge_worktree')
+            if (!mergeGate.allowed) {
+              respond({
+                id,
+                result: {
+                  success: false,
+                  error: `Worktree merge 已暂停：${mergeGate.reason || '风险阈值触发'}；触发时间=${mergeGate.triggerAt || 'unknown'}；阈值=${mergeGate.threshold || 'unknown'}；影响范围=${mergeGate.impactScope || 'Worktree merge'}；恢复条件=${mergeGate.recoveryCondition || '风险指标恢复'}`,
+                },
+              })
+              break
+            }
+
             const mergeResult = await gitService.mergeToMain(repoPath, branchName, { squash: params.squash ?? true, message: params.message || `Merge branch ${branchName} via SpectrAI`, cleanup: params.cleanup ?? false })
 
             // ★ 合并成功后，通知 FileChangeTracker 记录 worktree 改动文件（在 cleanup 之前）

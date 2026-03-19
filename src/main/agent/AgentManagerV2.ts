@@ -20,6 +20,8 @@ import type { AIProvider } from '../../shared/types'
 import { isProviderAvailable, checkProviderAvailability } from './providerAvailability'
 import { MCPConfigGenerator } from './MCPConfigGenerator'
 import { GitWorktreeService } from '../git/GitWorktreeService'
+import { scheduleCleanupCompensation } from '../git/WorktreeSessionSafety'
+import { WorktreeRiskGuard } from '../git/WorktreeRiskGuard'
 import {
   getPositiveTimeout,
   resolveBridgeWaitTimeoutMs as resolveBridgeWaitTimeoutByPolicy,
@@ -42,6 +44,7 @@ export class AgentManagerV2 extends EventEmitter {
   private sessionManager: SessionManagerV2
   private database: DatabaseManager
   private gitWorktreeService = new GitWorktreeService()
+  private worktreeRiskGuard = WorktreeRiskGuard.getInstance()
   /** Agent Bridge WebSocket 端口，用于为子会话生成 MCP 配置（0 = 未初始化） */
   private bridgePort: number = 0
 
@@ -633,7 +636,7 @@ export class AgentManagerV2 extends EventEmitter {
     const defaultToken = `${sessionId.slice(0, 8)}-${nowTag}`
     const nameToken = this.sanitizeWorktreeToken(params.worktreeName ?? params.taskId, defaultToken, 48)
     const defaultBranch = `worktree/${nameToken}`
-    const branchName = typeof params.branchName === 'string' && params.branchName.trim()
+    const preferredBranch = typeof params.branchName === 'string' && params.branchName.trim()
       ? params.branchName.trim()
       : defaultBranch
 
@@ -650,7 +653,12 @@ export class AgentManagerV2 extends EventEmitter {
           worktreePath: expectedPath,
           branch: await this.gitWorktreeService.getCurrentBranch(expectedPath),
         }
-      : await this.gitWorktreeService.createWorktree(repoPath, branchName, taskId)
+      : await this.gitWorktreeService.createIsolatedWorktree(
+          repoPath,
+          preferredBranch,
+          taskId,
+          this.sanitizeWorktreeToken(`${sessionId.slice(0, 8)}-${nowTag}`, sessionId.slice(0, 8), 24),
+        )
 
     // 记录 worktree 创建时的 base commit，用于合并后仍能查看差异
     let baseCommit = ''
@@ -845,6 +853,18 @@ export class AgentManagerV2 extends EventEmitter {
             repoPath = task.gitRepoPath; branchName = task.gitBranch; worktreePath = task.worktreePath || undefined
           }
           if (!repoPath || !branchName) { respond({ id, error: '缺少 repoPath 和 branchName（或提供 taskId）' }); break }
+          const mergeGate = this.worktreeRiskGuard.assertMergeAllowed('AgentManagerV2.merge_worktree')
+          if (!mergeGate.allowed) {
+            respond({
+              id,
+              result: {
+                success: false,
+                error: `Worktree merge 已暂停：${mergeGate.reason || '风险阈值触发'}；触发时间=${mergeGate.triggerAt || 'unknown'}；阈值=${mergeGate.threshold || 'unknown'}；影响范围=${mergeGate.impactScope || 'Worktree merge'}；恢复条件=${mergeGate.recoveryCondition || '风险指标恢复'}`,
+              },
+            })
+            break
+          }
+
           // 从 session 中读取 baseBranch，避免 detectMainBranch 误判
           if (!targetBranch) {
             const sess = this.sessionManager.getSession(sessionId)
@@ -882,8 +902,32 @@ export class AgentManagerV2 extends EventEmitter {
               try {
                 await this.gitWorktreeService.removeWorktree(repoPath, worktreePath, { deleteBranch: true, branchName })
                 if (taskId) this.database.updateTask(taskId, { worktreePath: '', status: 'done' })
+                this.worktreeRiskGuard.recordCleanupResolved(`${taskId || sessionId}:${repoPath}:${worktreePath}`)
               } catch (cleanupErr: any) {
                 console.warn('[AgentManagerV2] Worktree cleanup warning:', cleanupErr.message)
+
+                const key = `${taskId || sessionId}:${repoPath}:${worktreePath}`
+                this.worktreeRiskGuard.recordCleanupPending(key, cleanupErr?.message || 'merge cleanup failed')
+                scheduleCleanupCompensation({
+                  key,
+                  reason: cleanupErr?.message || 'merge cleanup failed',
+                  run: async () => {
+                    await this.gitWorktreeService.removeWorktree(repoPath, worktreePath, { deleteBranch: true, branchName })
+                  },
+                })
+
+                try {
+                  const sess = this.sessionManager.getSession(sessionId)
+                  if (sess) {
+                    sess.config = { ...sess.config, worktreeCleanupState: 'pending' }
+                    const persisted = this.database.getSession(sessionId)
+                    this.database.updateSession(sessionId, {
+                      config: { ...(persisted?.config || {}), ...sess.config },
+                    } as any)
+                  }
+                } catch {
+                  // ignore status persistence errors
+                }
               }
             }
 

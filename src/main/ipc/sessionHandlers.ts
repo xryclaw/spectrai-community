@@ -10,6 +10,9 @@ import type { AIProvider, SessionConfig, WorkflowPhase } from '../../shared/type
 import { initAutonomousWorkflowEngine, getAutonomousWorkflowEngine } from '../agent/AutonomousWorkflowEngine'
 import { extractImageTags, stripImageTags } from '../../shared/utils/messageContent'
 import { MCPConfigGenerator } from '../agent/MCPConfigGenerator'
+import { GitWorktreeService } from '../git/GitWorktreeService'
+import { WorktreeRiskGuard } from '../git/WorktreeRiskGuard'
+import { withRepoProvisionCleanupLock } from '../git/WorktreeSessionSafety'
 import {
   injectAwarenessPrompt,
   injectSupervisorPrompt,
@@ -29,9 +32,14 @@ import {
   buildFileOpsPrompt,
   injectFileOpsRuleToAgentsMd,
   injectFileOpsRuleToGeminiMd,
+  buildWorktreeAlreadyActivePrompt,
+  injectWorktreeAlreadyActiveRule,
+  injectWorktreeAlreadyActiveToAgentsMd,
+  injectWorktreeAlreadyActiveToGeminiMd,
 } from '../agent/supervisorPrompt'
 import { checkProviderAvailability } from '../agent/providerAvailability'
 import type { IpcDependencies } from './index'
+import { failResult, IPC_ERROR_CODES } from './errorResult'
 import { sendToRenderer, aiRenamingLocks, performAiRename } from './shared'
 
 const RESUME_PROMPT_TOKEN_BUDGET = 7000
@@ -401,9 +409,75 @@ function buildCreateSessionDedupeKey(config: SessionConfig): string {
     config.providerId || '',
     config.workspaceId || '',
     config.supervisorMode ? '1' : '0',
+    config.worktreeEnabled ? '1' : '0',
     (config.initialPrompt || '').trim(),
     (config.name || '').trim(),
   ].join('|')
+}
+
+type SessionRepoDescriptor = {
+  id: string
+  repoPath: string
+  isPrimary: boolean
+  name?: string
+}
+
+type SessionWorkspaceMeta = {
+  mode: 'single' | 'workspace'
+  worktreePath: string
+  branch: string
+  baseBranch: string
+  fallbackState: 'disabled' | 'not_used' | 'used'
+}
+
+function sanitizeToken(value: unknown, fallback: string, maxLength = 48): string {
+  const raw = typeof value === 'string' ? value : ''
+  const sanitized = raw
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, maxLength)
+  return sanitized || fallback
+}
+
+function normalizeSessionBranchBase(config: SessionConfig): string {
+  const nameToken = sanitizeToken(config?.name || '', 'session', 40)
+  const idToken = sanitizeToken(config?.id || '', 'session', 12)
+  const fallback = `session/${nameToken || idToken}`
+
+  const normalized = fallback
+    .replace(/[^a-z0-9/_-]+/g, '-')
+    .replace(/\/+/g, '/')
+    .replace(/-{2,}/g, '-')
+    .replace(/^[-/]+|[-/]+$/g, '')
+
+  return normalized.includes('/') ? normalized.slice(0, 120) : `session/${normalized.slice(0, 110)}`
+}
+
+async function resolveSharedBranchName(
+  gitService: GitWorktreeService,
+  repos: SessionRepoDescriptor[],
+  preferredBranch: string,
+  uniqueSeed: string,
+): Promise<string> {
+  const candidates = [preferredBranch, `${preferredBranch}-${uniqueSeed}`]
+
+  for (const candidate of candidates) {
+    const existsList = await Promise.all(repos.map(r => gitService.branchExists(r.repoPath, candidate)))
+    if (existsList.every(exists => !exists)) {
+      return candidate
+    }
+  }
+
+  for (let i = 1; i <= 1000; i++) {
+    const candidate = `${preferredBranch}-${uniqueSeed}-${i}`
+    const existsList = await Promise.all(repos.map(r => gitService.branchExists(r.repoPath, candidate)))
+    if (existsList.every(exists => !exists)) {
+      return candidate
+    }
+  }
+
+  throw new Error(`无法为分支 ${preferredBranch} 生成唯一名称，请稍后重试`)
 }
 
 export function registerSessionHandlers(deps: IpcDependencies): void {
@@ -510,7 +584,7 @@ export function registerSessionHandlers(deps: IpcDependencies): void {
 
       // ★ 若选择了工作区，注入多仓库上下文（让 AI 知道所有仓库路径）
       // 注意：此处为普通 session，worktree 未预建，使用专用的 session 文案（非 task 文案）
-      let workspaceRepos: Array<{ name: string; repoPath: string; isPrimary: boolean }> = []
+      let workspaceRepos: Array<{ id: string; name: string; repoPath: string; isPrimary: boolean }> = []
       if (config.workspaceId) {
         try {
           const workspace = database.getWorkspace(config.workspaceId)
@@ -521,6 +595,7 @@ export function registerSessionHandlers(deps: IpcDependencies): void {
               config.workingDirectory = primaryRepo.repoPath
             }
             workspaceRepos = workspace.repos.map((r: any) => ({
+              id: String(r.id),
               name: r.name,
               repoPath: r.repoPath,
               isPrimary: r.isPrimary,
@@ -577,8 +652,179 @@ export function registerSessionHandlers(deps: IpcDependencies): void {
       //   gemini-cli   → GEMINI.md（Gemini CLI 自动加载）
       //   其他未知      → fallback：作为 initialPrompt 前缀发送
       const settings = database.getAppSettings()
-      console.log(`[IPC] autoWorktree=${settings.autoWorktree}, providerId=${providerId}, workDir=${config.workingDirectory}`)
-      if (settings.autoWorktree) {
+      const riskGuard = WorktreeRiskGuard.getInstance()
+      const worktreeFallbackMode = (process.env.WORKTREE_FALLBACK_MODE || 'disabled').toLowerCase()
+      // M2: SESSION_CREATE 缺省策略统一为开启 worktree。
+      // - 未传 worktreeEnabled: 默认 true（对齐前端“默认勾选”）
+      // - 显式 false: 允许关闭，走非 worktree 会话
+      const worktreeEnabled = config.worktreeEnabled ?? true
+      config.worktreeEnabled = worktreeEnabled
+      let workspaceMeta: SessionWorkspaceMeta | undefined
+
+      console.log(
+        `[IPC] autoWorktree(global)=${settings.autoWorktree}, worktreeEnabled(session)=${config.worktreeEnabled}, effective=${worktreeEnabled}, providerId=${providerId}, workDir=${config.workingDirectory}`
+      )
+
+      if (worktreeEnabled) {
+        const gitService = new GitWorktreeService()
+        const mode: SessionWorkspaceMeta['mode'] = config.workspaceId ? 'workspace' : 'single'
+        let repos: SessionRepoDescriptor[] = []
+
+        if (config.workspaceId) {
+          if (!workspaceRepos.length) {
+            return failResult(IPC_ERROR_CODES.NOT_FOUND, '工作区不存在或未配置仓库')
+          }
+          repos = workspaceRepos.map(repo => ({
+            id: repo.id,
+            repoPath: repo.repoPath,
+            isPrimary: !!repo.isPrimary,
+            name: repo.name,
+          }))
+        } else {
+          if (!config.workingDirectory) {
+            return failResult(IPC_ERROR_CODES.INVALID_ARGUMENT, '缺少 workingDirectory，无法创建 Worktree')
+          }
+          const isRepo = await gitService.isGitRepo(config.workingDirectory)
+          if (!isRepo) {
+            return failResult(IPC_ERROR_CODES.NOT_GIT_REPO, `目录不是 Git 仓库: ${config.workingDirectory}`)
+          }
+          const repoRoot = await gitService.getRepoRoot(config.workingDirectory)
+          repos = [{ id: 'single', repoPath: repoRoot, isPrimary: true, name: 'repo' }]
+        }
+
+        const primaryRepo = repos.find(r => r.isPrimary) || repos[0]
+        const preferredBranch = normalizeSessionBranchBase(config)
+        const uniqueSeed = sanitizeToken(`${config.id || 'session'}-${Date.now().toString(36)}`, 'session', 24)
+        const createdByRepoPath = new Map<string, string>()
+        const createdByRepoId: Record<string, string> = {}
+
+        let resolvedSessionBranch = ''
+        let baseBranch = ''
+        let baseCommit = ''
+
+        try {
+          await withRepoProvisionCleanupLock(
+            repos.map(r => r.repoPath),
+            async () => {
+              baseBranch = await gitService.getCurrentBranch(primaryRepo.repoPath)
+              baseCommit = await gitService.getHeadCommit(primaryRepo.repoPath)
+              resolvedSessionBranch = await resolveSharedBranchName(gitService, repos, preferredBranch, uniqueSeed)
+
+              for (const repo of repos) {
+                const scopedTaskId = sanitizeToken(
+                  `${config.id || 'session'}-${repo.id}-${Date.now().toString(36)}`,
+                  `${config.id || 'session'}-${repo.id}`,
+                  96,
+                )
+                const created = await gitService.createIsolatedWorktree(
+                  repo.repoPath,
+                  resolvedSessionBranch,
+                  scopedTaskId,
+                  uniqueSeed,
+                )
+                createdByRepoPath.set(repo.repoPath, created.worktreePath)
+                createdByRepoId[repo.id] = created.worktreePath
+              }
+            }
+          )
+
+          config.workingDirectory = createdByRepoId[primaryRepo.id] || config.workingDirectory
+          config.worktreePath = createdByRepoId[primaryRepo.id]
+          config.worktreeBranch = resolvedSessionBranch
+          config.worktreeSourceRepo = primaryRepo.repoPath
+          config.worktreeBaseBranch = baseBranch
+          config.worktreeBaseCommit = baseCommit
+          ;(config as any).worktreeWorkspaceMode = mode
+          ;(config as any).worktreeCleanupState = 'ok'
+          ;(config as any).worktreeFallbackState = worktreeFallbackMode === 'disabled' ? 'disabled' : 'not_used'
+
+          if (config.workspaceId) {
+            const additionalDirs = repos
+              .filter(r => !r.isPrimary)
+              .map(r => createdByRepoId[r.id])
+              .filter(Boolean)
+            config.additionalDirectories = additionalDirs
+            workspaceRepos = workspaceRepos.map(repo => ({
+              ...repo,
+              repoPath: createdByRepoId[repo.id] || repo.repoPath,
+            }))
+          }
+
+          if (providerId === 'claude-code') {
+            injectWorktreeAlreadyActiveRule(config.workingDirectory, config.worktreeBranch)
+          } else if (providerId === 'codex') {
+            injectWorktreeAlreadyActiveToAgentsMd(config.workingDirectory, config.worktreeBranch)
+          } else if (providerId === 'gemini-cli') {
+            injectWorktreeAlreadyActiveToGeminiMd(config.workingDirectory, config.worktreeBranch)
+          } else {
+            const alreadyActivePrompt = buildWorktreeAlreadyActivePrompt(config.worktreeBranch)
+            config.systemPromptAppend = config.systemPromptAppend
+              ? `${config.systemPromptAppend}\n\n${alreadyActivePrompt}`
+              : alreadyActivePrompt
+          }
+
+          workspaceMeta = {
+            mode,
+            worktreePath: config.worktreePath || '',
+            branch: config.worktreeBranch || '',
+            baseBranch: config.worktreeBaseBranch || '',
+            fallbackState: worktreeFallbackMode === 'disabled' ? 'disabled' : 'not_used',
+          }
+
+          riskGuard.recordFallbackAttempt(false)
+        } catch (wtErr: any) {
+          await Promise.allSettled(
+            repos.map(async repo => {
+              const createdPath = createdByRepoPath.get(repo.repoPath)
+              if (!createdPath) return
+              try {
+                await gitService.removeWorktree(repo.repoPath, createdPath, {
+                  deleteBranch: true,
+                  branchName: resolvedSessionBranch || undefined,
+                })
+              } catch {
+                // rollback best effort
+              }
+            })
+          )
+
+          riskGuard.recordProvisionFailure(String(wtErr?.message || wtErr || 'unknown'))
+
+          if (worktreeFallbackMode !== 'disabled') {
+            riskGuard.recordFallbackAttempt(true)
+            return failResult(
+              IPC_ERROR_CODES.EXTERNAL_OPERATION_FAILED,
+              'SESSION_CREATE Worktree 创建失败，fallback 需审批后执行',
+              {
+                workspaceMeta: {
+                  mode,
+                  worktreePath: '',
+                  branch: '',
+                  baseBranch: '',
+                  fallbackState: 'used',
+                },
+              }
+            )
+          }
+
+          riskGuard.recordFallbackAttempt(false)
+          return failResult(
+            IPC_ERROR_CODES.EXTERNAL_OPERATION_FAILED,
+            `SESSION_CREATE Worktree 创建失败: ${wtErr?.message || '未知错误'}`,
+            {
+              workspaceMeta: {
+                mode,
+                worktreePath: '',
+                branch: '',
+                baseBranch: '',
+                fallbackState: 'disabled',
+              },
+            }
+          )
+        }
+      }
+
+      if (worktreeEnabled) {
         if (providerId === 'claude-code') {
           // 主仓库注入（会话工作目录）
           injectWorktreeRule(config.workingDirectory)
@@ -699,6 +945,7 @@ export function registerSessionHandlers(deps: IpcDependencies): void {
           ready: true,
           status: readyInfo.status,
           error: readyInfo.error || '会话启动失败',
+          workspaceMeta,
         }
       }
 
@@ -707,6 +954,7 @@ export function registerSessionHandlers(deps: IpcDependencies): void {
         sessionId,
         ready: readyInfo.ready,
         status: readyInfo.status,
+        workspaceMeta,
       }
       } catch (error: any) {
         console.error('[IPC] SESSION_CREATE error:', error)

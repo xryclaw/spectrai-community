@@ -378,7 +378,7 @@ export class GitWorktreeService {
   }
 
   /**
-   * 检查分支是否存在
+   * 检查本地分支是否存在
    */
   async branchExists(repoPath: string, branch: string): Promise<boolean> {
     try {
@@ -390,6 +390,26 @@ export class GitWorktreeService {
   }
 
   /**
+   * Check whether a remote-tracking branch exists under refs/remotes/<remote>/<branch>.
+   */
+  async remoteBranchExists(repoPath: string, branch: string): Promise<boolean> {
+    try {
+      const escaped = branch.replace(/[\[\]\\*\?]/g, '\\$&')
+      const output = await this.git(repoPath, ['for-each-ref', '--format=%(refname)', `refs/remotes/*/${escaped}`])
+      return output.split('\n').filter(Boolean).length > 0
+    } catch {
+      return false
+    }
+  }
+
+  /**
+   * 检查分支是否在本地或远程引用中已存在
+   */
+  async branchExistsAnywhere(repoPath: string, branch: string): Promise<boolean> {
+    return (await this.branchExists(repoPath, branch)) || (await this.remoteBranchExists(repoPath, branch))
+  }
+
+  /**
    * 计算 worktree 目标目录
    * 统一放在 仓库根/.spectrai-worktrees/<taskId>/
    */
@@ -398,32 +418,69 @@ export class GitWorktreeService {
   }
 
   /**
-   * 创建 worktree（含分支创建 + 锁保护）
+   * 生成隔离分支的唯一名称（必须在 repo lock 内调用）
    */
-  async createWorktree(
+  private async resolveUniqueBranchNameLocked(
+    repoPath: string,
+    preferredBranch: string,
+    uniqueSeed?: string,
+  ): Promise<string> {
+    const baseBranch = preferredBranch.trim()
+    const normalizedSeed = (uniqueSeed || '')
+      .toLowerCase()
+      .replace(/[^a-z0-9._-]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 32)
+
+    const candidates: string[] = [baseBranch]
+    if (normalizedSeed) {
+      candidates.push(`${baseBranch}-${normalizedSeed}`)
+    }
+
+    for (const candidate of candidates) {
+      if (!(await this.branchExistsAnywhere(repoPath, candidate))) {
+        return candidate
+      }
+    }
+
+    const seedPrefix = normalizedSeed || Date.now().toString(36)
+    for (let i = 1; i <= 1000; i++) {
+      const candidate = `${baseBranch}-${seedPrefix}-${i}`
+      if (!(await this.branchExistsAnywhere(repoPath, candidate))) {
+        return candidate
+      }
+    }
+
+    throw new Error(`无法为分支 ${baseBranch} 生成唯一名称，请稍后重试`)
+  }
+
+  private async createWorktreeInternal(
     repoPath: string,
     branch: string,
     taskId: string,
+    forceCreateBranch: boolean,
   ): Promise<{ worktreePath: string; branch: string }> {
-    return withRepoLock(repoPath, async () => {
-      const worktreePath = this.getWorktreeBasePath(repoPath, taskId)
+    const worktreePath = this.getWorktreeBasePath(repoPath, taskId)
 
-      // 安全检查：目标目录不应已存在
-      if (fs.existsSync(worktreePath)) {
-        // 可能是上次创建失败残留，尝试清理
-        try {
-          await this.git(repoPath, ['worktree', 'remove', '--force', worktreePath])
-        } catch {
-          // 忽略，后面 add 会报错
-        }
+    // 安全检查：目标目录不应已存在
+    if (fs.existsSync(worktreePath)) {
+      // 可能是上次创建失败残留，尝试清理
+      try {
+        await this.git(repoPath, ['worktree', 'remove', '--force', worktreePath])
+      } catch {
+        // 忽略，后面 add 会报错
       }
+    }
 
-      // 确保父目录存在
-      const parentDir = path.dirname(worktreePath)
-      if (!fs.existsSync(parentDir)) {
-        fs.mkdirSync(parentDir, { recursive: true })
-      }
+    // 确保父目录存在
+    const parentDir = path.dirname(worktreePath)
+    if (!fs.existsSync(parentDir)) {
+      fs.mkdirSync(parentDir, { recursive: true })
+    }
 
+    if (forceCreateBranch) {
+      await this.git(repoPath, ['worktree', 'add', '-b', branch, worktreePath])
+    } else {
       // 如果分支已存在，直接 checkout；否则创建新分支
       const exists = await this.branchExists(repoPath, branch)
       if (exists) {
@@ -431,12 +488,40 @@ export class GitWorktreeService {
       } else {
         await this.git(repoPath, ['worktree', 'add', '-b', branch, worktreePath])
       }
+    }
 
-      // 确保 .spectrai-worktrees 被 .gitignore
-      await this.ensureGitignore(repoPath)
+    // 确保 .spectrai-worktrees 被 .gitignore
+    await this.ensureGitignore(repoPath)
 
-      console.log(`[GitWorktree] Created worktree: ${worktreePath} (branch: ${branch})`)
-      return { worktreePath, branch }
+    console.log(`[GitWorktree] Created worktree: ${worktreePath} (branch: ${branch})`)
+    return { worktreePath, branch }
+  }
+
+  /**
+   * 创建 worktree（兼容模式：分支存在时复用）
+   */
+  async createWorktree(
+    repoPath: string,
+    branch: string,
+    taskId: string,
+  ): Promise<{ worktreePath: string; branch: string }> {
+    return withRepoLock(repoPath, async () => {
+      return this.createWorktreeInternal(repoPath, branch, taskId, false)
+    })
+  }
+
+  /**
+   * 创建隔离 worktree（强制新分支，避免并行会话互相污染）
+   */
+  async createIsolatedWorktree(
+    repoPath: string,
+    preferredBranch: string,
+    taskId: string,
+    uniqueSeed?: string,
+  ): Promise<{ worktreePath: string; branch: string }> {
+    return withRepoLock(repoPath, async () => {
+      const branch = await this.resolveUniqueBranchNameLocked(repoPath, preferredBranch, uniqueSeed)
+      return this.createWorktreeInternal(repoPath, branch, taskId, true)
     })
   }
 
