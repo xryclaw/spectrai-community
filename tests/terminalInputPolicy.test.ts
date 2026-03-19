@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { shouldBlockTerminalEnterDuringIme } from '../src/renderer/hooks/terminalInputPolicy'
+import { shouldBlockTerminalEnterDuringIme } from '../src/renderer/hooks/terminalInputPolicy.ts'
 
 test('should block Enter when isComposing is true', () => {
   const blocked = shouldBlockTerminalEnterDuringIme({

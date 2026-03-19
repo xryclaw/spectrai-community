@@ -41,9 +41,12 @@ export function registerSystemHandlers(deps: IpcDependencies): void {
 
   ipcMain.handle(IPC.LOG_GET_RECENT, async (_event, lines: number = 200) => {
     const logPath = join(app.getPath('userData'), 'logs', 'main.log')
-    if (!fs.existsSync(logPath)) return []
-    const content = fs.readFileSync(logPath, 'utf-8')
-    return content.split('\n').filter(Boolean).slice(-lines)
+    try {
+      const content = await fs.promises.readFile(logPath, 'utf-8')
+      return content.split('\n').filter(Boolean).slice(-lines)
+    } catch {
+      return []
+    }
   })
 
   ipcMain.handle(IPC.LOG_OPEN_FILE, async () => {

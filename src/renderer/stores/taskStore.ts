@@ -5,6 +5,7 @@
 
 import { create } from 'zustand'
 import type { TaskCard, TaskStatus } from '../../shared/types'
+import { ensureIpcSuccess, resolveIpcErrorMessage } from '../utils/ipcError'
 
 interface TaskState {
   // 状态
@@ -39,10 +40,11 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   // 创建新任务
   createTask: async (task: Partial<TaskCard>) => {
     try {
-      await window.spectrAI.task.create(task)
+      const result = await window.spectrAI.task.create(task)
+      ensureIpcSuccess(result, '创建任务失败')
       await get().fetchTasks()
     } catch (error) {
-      console.error('Failed to create task:', error)
+      console.error('Failed to create task:', resolveIpcErrorMessage(error, '创建任务失败'))
       throw error
     }
   },
@@ -50,10 +52,11 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   // 更新任务
   updateTask: async (id: string, updates: Partial<TaskCard>) => {
     try {
-      await window.spectrAI.task.update(id, updates)
+      const result = await window.spectrAI.task.update(id, updates)
+      ensureIpcSuccess(result, '更新任务失败')
       await get().fetchTasks()
     } catch (error) {
-      console.error('Failed to update task:', error)
+      console.error('Failed to update task:', resolveIpcErrorMessage(error, '更新任务失败'))
       throw error
     }
   },
@@ -61,10 +64,11 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   // 删除任务
   deleteTask: async (id: string) => {
     try {
-      await window.spectrAI.task.delete(id)
+      const result = await window.spectrAI.task.delete(id)
+      ensureIpcSuccess(result, '删除任务失败')
       await get().fetchTasks()
     } catch (error) {
-      console.error('Failed to delete task:', error)
+      console.error('Failed to delete task:', resolveIpcErrorMessage(error, '删除任务失败'))
       throw error
     }
   },
@@ -102,15 +106,17 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   // 为任务启动关联会话
   startSessionForTask: async (taskId: string, config?: any) => {
     try {
-      const result = await window.spectrAI.task.startSession(taskId, config)
+      const rawResult = await window.spectrAI.task.startSession(taskId, config)
+      const result = ensureIpcSuccess(rawResult, '启动任务会话失败') as { success: boolean; sessionId?: string; reused?: boolean; error?: string }
       if (result.success) {
         // 刷新任务列表以反映状态变化
         await get().fetchTasks()
       }
       return result
-    } catch (error: any) {
-      console.error('Failed to start session for task:', error)
-      return { success: false, error: error.message }
+    } catch (error) {
+      const message = resolveIpcErrorMessage(error, '启动任务会话失败')
+      console.error('Failed to start session for task:', message)
+      return { success: false, error: message }
     }
   },
 

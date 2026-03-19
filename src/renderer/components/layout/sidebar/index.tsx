@@ -17,6 +17,11 @@ export { SessionItem, AgentSubList, WorktreeSubList } from './SessionItem'
 export { TimeGroupCard, DirGroupCard } from './SessionGroupCards'
 export { SessionPickerModal } from './SessionPickerModal'
 export { GroupByToggle } from './GroupByToggle'
+export { SessionsTopBar } from './SessionsTopBar'
+export { SessionsFooter } from './SessionsFooter'
+export { SessionContextMenu } from './SessionContextMenu'
+export { DirectoryContextMenu } from './DirectoryContextMenu'
+export { DeleteSessionDialog } from './DeleteSessionDialog'
 
 // Hooks
 export { useGroupCollapsed } from './hooks'

@@ -1,0 +1,16 @@
+[
+  {
+    "ruleId": "renderer-layout-sidebar-no-settings-modal",
+    "from": "src/renderer/components/layout/Sidebar.tsx",
+    "to": "src/renderer/components/settings/UnifiedSettingsModal.tsx",
+    "reason": "设置弹窗入口仍在 Sidebar，等待设置页入口统一后移除",
+    "expiresOn": "2026-03-31"
+  },
+  {
+    "ruleId": "renderer-detailpanel-no-sidebar-monolith",
+    "from": "src/renderer/components/layout/DetailPanel.tsx",
+    "to": "src/renderer/components/layout/Sidebar.tsx",
+    "reason": "DetailPanel 仍复用 Sidebar 导出的 SessionsContent，等待独立模块下沉后移除",
+    "expiresOn": "2026-03-31"
+  }
+]

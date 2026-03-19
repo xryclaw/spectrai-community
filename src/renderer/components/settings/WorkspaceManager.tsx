@@ -14,6 +14,7 @@ import {
   ChevronDown, ChevronRight, Loader2, Check, AlertCircle, FolderOpen,
 } from 'lucide-react'
 import type { Workspace, WorkspaceRepo } from '../../../shared/types'
+import { ensureIpcSuccess, resolveIpcErrorMessage } from '../../utils/ipcError'
 
 // ──────────────────────────────────────────────
 // 工作区列表 Tab（直接渲染在 UnifiedSettingsModal 内容区）
@@ -21,16 +22,19 @@ import type { Workspace, WorkspaceRepo } from '../../../shared/types'
 export function WorkspaceTab() {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [editTarget, setEditTarget] = useState<Workspace | null | 'create'>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
+    setLoadError(null)
     try {
       const list = await window.spectrAI.workspace.list()
       setWorkspaces(list || [])
-    } catch {
+    } catch (err) {
       setWorkspaces([])
+      setLoadError(resolveIpcErrorMessage(err, '工作区列表加载失败'))
     } finally {
       setLoading(false)
     }
@@ -41,10 +45,11 @@ export function WorkspaceTab() {
   const handleDelete = async (ws: Workspace) => {
     if (!confirm(`确认删除工作区「${ws.name}」？此操作不可撤销。`)) return
     try {
-      await window.spectrAI.workspace.delete(ws.id)
+      const result = await window.spectrAI.workspace.delete(ws.id)
+      ensureIpcSuccess(result, '删除失败')
       await load()
-    } catch (err: any) {
-      alert(`删除失败：${err.message}`)
+    } catch (err) {
+      alert(`删除失败：${resolveIpcErrorMessage(err, '未知错误')}`)
     }
   }
 
@@ -72,6 +77,18 @@ export function WorkspaceTab() {
         <div className="flex items-center justify-center py-8 text-text-muted">
           <Loader2 className="w-5 h-5 animate-spin mr-2" />
           <span className="text-sm">加载中…</span>
+        </div>
+      ) : loadError ? (
+        <div className="flex flex-col items-center justify-center py-10 text-text-muted gap-2">
+          <AlertCircle className="w-10 h-10 text-accent-red/70" />
+          <p className="text-sm text-text-primary">工作区列表加载失败</p>
+          <p className="text-xs text-text-muted">{loadError}</p>
+          <button
+            onClick={load}
+            className="mt-1 px-3 py-1.5 rounded bg-accent-blue text-white text-xs font-medium hover:bg-accent-blue/90 btn-transition"
+          >
+            重新加载
+          </button>
         </div>
       ) : workspaces.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-10 text-text-muted gap-2">
@@ -301,14 +318,13 @@ function WorkspaceEditModal({
     setScanLoading(true)
     setScanResults([])
     try {
-      const result = await window.spectrAI.workspace.scanRepos(scanDir)
+      const rawResult = await window.spectrAI.workspace.scanRepos(scanDir)
+      const result = ensureIpcSuccess(rawResult, '扫描失败') as { success: boolean; repos?: any[] }
       if (result.success) {
         setScanResults((result.repos || []).map((r: any) => ({ ...r, checked: true })))
-      } else {
-        setError(result.error || '扫描失败')
       }
-    } catch (err: any) {
-      setError(err.message)
+    } catch (err) {
+      setError(resolveIpcErrorMessage(err, '扫描失败'))
     } finally {
       setScanLoading(false)
     }
@@ -340,14 +356,13 @@ function WorkspaceEditModal({
     setImportLoading(true)
     setImportResults([])
     try {
-      const result = await window.spectrAI.workspace.importVscode(vscodeFilePath.trim())
+      const rawResult = await window.spectrAI.workspace.importVscode(vscodeFilePath.trim())
+      const result = ensureIpcSuccess(rawResult, '导入失败') as { success: boolean; repos?: any[] }
       if (result.success) {
         setImportResults((result.repos || []).map((r: any) => ({ ...r, checked: true })))
-      } else {
-        setError(result.error || '导入失败')
       }
-    } catch (err: any) {
-      setError(err.message)
+    } catch (err) {
+      setError(resolveIpcErrorMessage(err, '导入失败'))
     } finally {
       setImportLoading(false)
     }
@@ -393,28 +408,27 @@ function WorkspaceEditModal({
         sortOrder: i,
       }))
 
-      let result: any
+      let rawResult: any
       if (isEdit && workspace) {
-        result = await window.spectrAI.workspace.update(workspace.id, {
+        rawResult = await window.spectrAI.workspace.update(workspace.id, {
           name: name.trim(),
           description: description.trim() || undefined,
           repos: reposData,
         })
       } else {
-        result = await window.spectrAI.workspace.create({
+        rawResult = await window.spectrAI.workspace.create({
           name: name.trim(),
           description: description.trim() || undefined,
           repos: reposData,
         })
       }
 
+      const result = ensureIpcSuccess(rawResult, '保存失败') as { success: boolean }
       if (result.success) {
         onSaved()
-      } else {
-        setError(result.error || '保存失败')
       }
-    } catch (err: any) {
-      setError(err.message)
+    } catch (err) {
+      setError(resolveIpcErrorMessage(err, '保存失败'))
     } finally {
       setSaving(false)
     }

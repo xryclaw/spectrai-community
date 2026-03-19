@@ -33,6 +33,7 @@ import { stripAnsi } from './agent/ansiUtils'
 import { AdapterRegistry } from './adapter/AdapterRegistry'
 import { SessionManagerV2 } from './session/SessionManagerV2'
 import { AgentManagerV2 } from './agent/AgentManagerV2'
+import { TeamOrchestrator } from './agent/team/TeamOrchestrator'
 import { ClaudeSdkAdapter } from './adapter/ClaudeSdkAdapter'
 import { CodexAppServerAdapter } from './adapter/CodexAppServerAdapter'
 import { GeminiHeadlessAdapter } from './adapter/GeminiHeadlessAdapter'
@@ -50,7 +51,9 @@ function resolveAgentBridgePort(): number {
   if (Number.isFinite(envPort) && envPort > 0) return envPort
 
   const appName = app.getName().toLowerCase()
-  return appName.includes('spectrai0') ? 63821 : 63721
+  if (appName.includes('spectrai0')) return 63821
+  if (appName.includes('spectrai1')) return 63721
+  return 63721
 }
 
 const AGENT_BRIDGE_PORT = resolveAgentBridgePort()
@@ -147,6 +150,7 @@ let updateManager: UpdateManager
 let adapterRegistry: AdapterRegistry
 let sessionManagerV2: SessionManagerV2
 let agentManagerV2: AgentManagerV2
+let teamOrchestrator: TeamOrchestrator
 // 文件改动追踪
 let fileChangeTracker: FileChangeTracker
 
@@ -424,6 +428,8 @@ function initializeManagers(): void {
   // 必须在 spawnAgent() 首次调用前完成注入，否则子会话无法使用 list_sessions 等跨会话感知工具
   agentManagerV2.setBridgePort(AGENT_BRIDGE_PORT)
 
+  // 12. Team Orchestrator
+  teamOrchestrator = new TeamOrchestrator(agentManagerV2, database)
 
 }
 
@@ -842,6 +848,7 @@ app.whenReady().then(() => {
     agentManagerV2,
     agentBridgePort: AGENT_BRIDGE_PORT,
     updateManager,
+    teamOrchestrator,
   }, fileChangeTracker)
 
   // 连接事件流

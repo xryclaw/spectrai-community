@@ -37,20 +37,21 @@ const FileChangeCard: React.FC<FileChangeCardProps> = ({ message }) => {
   const openFileInTab = useFileManagerStore(s => s.openFileInTab)
 
   const fc = message.fileChange
-  if (!fc) return null
-
-  const style = CHANGE_TYPE_STYLES[fc.changeType] || CHANGE_TYPE_STYLES.edit
+  const style = CHANGE_TYPE_STYLES[fc?.changeType || 'edit'] || CHANGE_TYPE_STYLES.edit
   const Icon = style.icon
-  const fileName = fc.filePath.split(/[/\\]/).pop() || fc.filePath
-  const dirPath = fc.filePath.split(/[/\\]/).slice(0, -1).join('/')
+  const filePath = fc?.filePath || ''
+  const operationDiff = fc?.operationDiff || ''
+  const cumulativeDiff = fc?.cumulativeDiff || ''
+  const fileName = filePath.split(/[/\\]/).pop() || filePath
+  const dirPath = filePath.split(/[/\\]/).slice(0, -1).join('/')
 
   // 解析 diff 行
   const diffLines = useMemo(() => {
-    const diffText = activeTab === 'cumulative' && fc.cumulativeDiff
-      ? fc.cumulativeDiff
-      : fc.operationDiff
+    const diffText = activeTab === 'cumulative' && cumulativeDiff
+      ? cumulativeDiff
+      : operationDiff
     return parseDiffLines(diffText)
-  }, [fc, activeTab])
+  }, [activeTab, cumulativeDiff, operationDiff])
 
   // 右键菜单
   const menuItems = useMemo<MenuItem[]>(() => [
@@ -65,21 +66,23 @@ const FileChangeCard: React.FC<FileChangeCardProps> = ({ message }) => {
       key: 'open-file',
       label: '在编辑器中打开',
       icon: <ExternalLink size={14} />,
-      onClick: () => openFileInTab(fc.filePath),
+      onClick: () => openFileInTab(filePath),
     },
     {
       key: 'copy-path',
       label: '复制文件路径',
       icon: <FolderOpen size={14} />,
-      onClick: () => navigator.clipboard.writeText(fc.filePath),
+      onClick: () => navigator.clipboard.writeText(filePath),
     },
     {
       key: 'copy-diff',
       label: '复制 Diff',
       icon: <Copy size={14} />,
-      onClick: () => navigator.clipboard.writeText(fc.operationDiff),
+      onClick: () => navigator.clipboard.writeText(operationDiff),
     },
-  ], [expanded, fc, openFileInTab])
+  ], [expanded, filePath, operationDiff, openFileInTab])
+
+  if (!fc) return null
 
   return (
     <div className="my-2 mx-2">
@@ -219,19 +222,13 @@ function parseDiffLines(diff: string): DiffLine[] {
       continue
     }
 
-    // diff --git header
-    if (rawLine.startsWith('diff ')) {
-      result.push({ type: 'info', prefix: '', content: rawLine })
-      continue
-    }
-
-    // 添加行
+    // 新增行
     if (rawLine.startsWith('+')) {
       result.push({
         type: 'add',
         prefix: '+',
         content: rawLine.slice(1),
-        lineNum: String(newLine++),
+        lineNum: String(newLine++)
       })
       continue
     }
@@ -242,43 +239,47 @@ function parseDiffLines(diff: string): DiffLine[] {
         type: 'delete',
         prefix: '-',
         content: rawLine.slice(1),
-        lineNum: String(oldLine++),
+        lineNum: String(oldLine++)
       })
       continue
     }
 
     // 上下文行
-    if (rawLine.startsWith(' ') || rawLine === '') {
+    if (rawLine.startsWith(' ')) {
       result.push({
         type: 'context',
         prefix: ' ',
-        content: rawLine.startsWith(' ') ? rawLine.slice(1) : rawLine,
-        lineNum: String(newLine++),
+        content: rawLine.slice(1),
+        lineNum: `${oldLine++}/${newLine++}`
       })
-      oldLine++
       continue
     }
 
-    // 其他（如 "\ No newline at end of file"）
-    result.push({ type: 'info', prefix: '', content: rawLine })
+    // 其他行
+    result.push({
+      type: 'info',
+      prefix: '',
+      content: rawLine,
+    })
   }
 
   return result
 }
 
-/**
- * 根据行类型返回 CSS 类名
- */
 function getDiffLineClass(type: DiffLine['type']): string {
   switch (type) {
-    case 'add':     return 'bg-accent-green/10 text-accent-green'
-    case 'delete':  return 'bg-accent-red/10 text-accent-red'
-    case 'header':  return 'bg-accent-blue/5 text-accent-blue'
-    case 'info':    return 'text-text-muted'
-    case 'context': return 'text-text-secondary'
-    default:        return ''
+    case 'add':
+      return 'bg-accent-green/10 text-accent-green'
+    case 'delete':
+      return 'bg-accent-red/10 text-accent-red'
+    case 'header':
+      return 'bg-accent-blue/10 text-accent-blue font-semibold'
+    case 'context':
+      return 'text-text-secondary'
+    case 'info':
+    default:
+      return 'text-text-muted'
   }
 }
 
-FileChangeCard.displayName = 'FileChangeCard'
-export default React.memo(FileChangeCard)
+export default FileChangeCard

@@ -6,7 +6,8 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import { IPC } from '../../shared/constants'
 import { BUILTIN_CLAUDE_PROVIDER } from '../../shared/types'
-import type { AIProvider, SessionConfig } from '../../shared/types'
+import type { AIProvider, SessionConfig, WorkflowPhase } from '../../shared/types'
+import { initAutonomousWorkflowEngine, getAutonomousWorkflowEngine } from '../agent/AutonomousWorkflowEngine'
 import { extractImageTags, stripImageTags } from '../../shared/utils/messageContent'
 import { MCPConfigGenerator } from '../agent/MCPConfigGenerator'
 import {
@@ -411,6 +412,14 @@ export function registerSessionHandlers(deps: IpcDependencies): void {
     agentBridgePort,
   } = deps
 
+  // 初始化 AutonomousWorkflowEngine 单例
+  const workflowEngine = initAutonomousWorkflowEngine(database)
+  workflowEngine.on('phase-change', (workflowId: string, phase: WorkflowPhase) => {
+    BrowserWindow.getAllWindows().forEach(win => {
+      win.webContents.send(IPC.WORKFLOW_PHASE_CHANGE, workflowId, phase)
+    })
+  })
+
   // ==================== Dialog 相关 ====================
 
   ipcMain.handle('dialog:select-directory', async () => {
@@ -493,6 +502,10 @@ export function registerSessionHandlers(deps: IpcDependencies): void {
         }
       } else if (providerId === 'claude-code') {
         injectAwarenessPrompt(config.workingDirectory)
+      }
+
+      if (config.autonomousMode) {
+        config.enableAgent = true
       }
 
       // ★ 若选择了工作区，注入多仓库上下文（让 AI 知道所有仓库路径）
@@ -668,6 +681,12 @@ export function registerSessionHandlers(deps: IpcDependencies): void {
       const sessionId = smV2.createSession(config, provider)
       concurrencyGuard.registerSession()
       database.recordDirectoryUsage(config.workingDirectory)
+
+      if (config.autonomousMode) {
+        workflowEngine.initWorkflow(sessionId, config.autonomousGoal ?? '').catch(err => {
+          console.warn('[IPC] initWorkflow error:', err)
+        })
+      }
 
       // 等待会话脱离 starting（可交互/失败）再返回，减少“创建成功但仍假性处理中”的体验问题
       const readyTimeoutMs = provider.id === 'codex' ? 12000 : 6000
@@ -1389,6 +1408,46 @@ export function registerSessionHandlers(deps: IpcDependencies): void {
     } catch (error: any) {
       console.error('[IPC] SESSION_CLEAR_QUEUE error:', error)
       return { success: false, error: error.message }
+    }
+  })
+
+  // ==================== Workflow 相关 ====================
+
+  ipcMain.handle(IPC.WORKFLOW_APPROVE, async (_event, workflowId: string) => {
+    try {
+      await workflowEngine.approve(workflowId)
+      return { success: true }
+    } catch (error: any) {
+      console.error('[IPC] WORKFLOW_APPROVE error:', error)
+      return { success: false, error: error.message }
+    }
+  })
+
+  ipcMain.handle(IPC.WORKFLOW_REJECT, async (_event, workflowId: string) => {
+    try {
+      await workflowEngine.reject(workflowId)
+      return { success: true }
+    } catch (error: any) {
+      console.error('[IPC] WORKFLOW_REJECT error:', error)
+      return { success: false, error: error.message }
+    }
+  })
+
+  ipcMain.handle(IPC.WORKFLOW_GET, async (_event, workflowId: string) => {
+    try {
+      return workflowEngine.getWorkflow(workflowId)
+    } catch (error: any) {
+      console.error('[IPC] WORKFLOW_GET error:', error)
+      return undefined
+    }
+  })
+
+  ipcMain.handle(IPC.WORKFLOW_GET_ALL, async (_event, sessionId: string) => {
+    try {
+      return workflowEngine.getWorkflowsBySession(sessionId)
+    } catch (error: any) {
+      console.error('[IPC] WORKFLOW_GET_ALL error:', error)
+      return []
     }
   })
 }

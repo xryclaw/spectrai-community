@@ -11,6 +11,8 @@ import TerminalHeader from './TerminalHeader'
 import ConfirmDialog from '../common/ConfirmDialog'
 import { ConversationView } from '../conversation'
 import { useSessionStore } from '../../stores/sessionStore'
+import { useTeamStore } from '../../stores/teamStore'
+import { TeamConversation } from '../team/TeamConversation'
 
 interface TerminalPanelProps {
   sessionId: string
@@ -27,6 +29,10 @@ const TerminalPanel: React.FC<TerminalPanelProps> = ({ sessionId, onMaximize, on
   // 从 Zustand store 精确订阅需要的方法（避免订阅整个 store 导致无关更新触发重渲染）
   const terminateSession = useSessionStore(state => state.terminateSession)
   const selectSession = useSessionStore(state => state.selectSession)
+
+  // 团队相关状态
+  const teamInstance = useTeamStore(state => state.getTeamForSession(sessionId))
+  const selectedMemberId = useTeamStore(state => state.selectedMemberId)
 
   // 已结束状态（无需确认可直接关闭）
   const INACTIVE_STATUSES = new Set(['completed', 'terminated', 'interrupted', 'error'])
@@ -48,6 +54,29 @@ const TerminalPanel: React.FC<TerminalPanelProps> = ({ sessionId, onMaximize, on
     onAfterClose?.()
   }
 
+  // 决定主内容区渲染什么
+  const renderContent = () => {
+    if (teamInstance) {
+      // 选中了某个成员 → 显示该成员的单独对话
+      if (selectedMemberId) {
+        const member = teamInstance.members?.find(m => m.id === selectedMemberId)
+        if (member?.sessionId) {
+          return <ConversationView sessionId={member.sessionId} />
+        }
+        // 成员还没有 sessionId（未启动），显示提示
+        return (
+          <div className="flex-1 flex items-center justify-center text-text-muted text-sm">
+            该成员尚未启动会话
+          </div>
+        )
+      }
+      // 未选中成员 → 显示团队对话
+      return <TeamConversation instanceId={teamInstance.id} />
+    }
+    // 普通会话
+    return <ConversationView sessionId={sessionId} />
+  }
+
   return (
     <div
       className="flex flex-col h-full bg-bg-primary rounded-lg border border-border overflow-hidden shadow-lg relative"
@@ -60,8 +89,8 @@ const TerminalPanel: React.FC<TerminalPanelProps> = ({ sessionId, onMaximize, on
         onClose={handleClose}
       />
 
-      {/* 对话视图 */}
-      <ConversationView sessionId={sessionId} />
+      {/* 对话视图（团队/普通） */}
+      {renderContent()}
 
       {/* 关闭确认对话框 */}
       <ConfirmDialog

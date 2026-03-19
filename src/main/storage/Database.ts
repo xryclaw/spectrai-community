@@ -26,6 +26,8 @@ import { SettingsRepository } from './repositories/SettingsRepository'
 import { WorkspaceRepository } from './repositories/WorkspaceRepository'
 import { McpRepository } from './repositories/McpRepository'
 import { SkillRepository } from './repositories/SkillRepository'
+import { WorkflowRepository } from './repositories/WorkflowRepository'
+import { TeamRepository } from './repositories/TeamRepository'
 
 
 /**
@@ -49,6 +51,8 @@ export class DatabaseManager {
   private workspaceRepo!: WorkspaceRepository
   private mcpRepo!: McpRepository
   private skillRepo!: SkillRepository
+  private workflowRepo!: WorkflowRepository
+  private teamRepo!: TeamRepository
 
 
   constructor(dbPath: string) {
@@ -88,6 +92,8 @@ export class DatabaseManager {
     this.workspaceRepo = new WorkspaceRepository(this.db, this.usingSqlite)
     this.mcpRepo = new McpRepository(this.db, this.usingSqlite)
     this.skillRepo = new SkillRepository(this.db, this.usingSqlite)
+    this.workflowRepo = new WorkflowRepository(this.db, this.usingSqlite)
+    this.teamRepo = new TeamRepository(this.db, this.usingSqlite)
     // 初始化内置预置数据
     this.insertBuiltinData()
   }
@@ -325,6 +331,38 @@ export class DatabaseManager {
   deleteSkill(id: string) { return this.skillRepo.delete(id) }
   toggleSkill(id: string, enabled: boolean) { return this.skillRepo.toggleEnabled(id, enabled) }
   getCompatibleSkills(providerId: string) { return this.skillRepo.getCompatibleWith(providerId) }
+
+  // ─── Workflow 操作 ───
+
+  createWorkflow = (...args: Parameters<WorkflowRepository['createWorkflow']>) => this.workflowRepo.createWorkflow(...args)
+  updateWorkflowPhase = (...args: Parameters<WorkflowRepository['updateWorkflowPhase']>) => this.workflowRepo.updateWorkflowPhase(...args)
+  setWorkflowApproved = (...args: Parameters<WorkflowRepository['setApproved']>) => this.workflowRepo.setApproved(...args)
+  getWorkflow = (...args: Parameters<WorkflowRepository['getWorkflow']>) => this.workflowRepo.getWorkflow(...args)
+  getWorkflowsBySession = (...args: Parameters<WorkflowRepository['getWorkflowsBySession']>) => this.workflowRepo.getWorkflowsBySession(...args)
+  upsertWorkflowStep = (...args: Parameters<WorkflowRepository['upsertStep']>) => this.workflowRepo.upsertStep(...args)
+  updateWorkflowStepStatus = (...args: Parameters<WorkflowRepository['updateStepStatus']>) => this.workflowRepo.updateStepStatus(...args)
+  getWorkflowSteps = (...args: Parameters<WorkflowRepository['getSteps']>) => this.workflowRepo.getSteps(...args)
+  addWorkflowEvent = (...args: Parameters<WorkflowRepository['addEvent']>) => this.workflowRepo.addEvent(...args)
+  getWorkflowEvents = (...args: Parameters<WorkflowRepository['getEvents']>) => this.workflowRepo.getEvents(...args)
+
+  // ─── Team 操作 ───
+
+  createTeamTemplate = (...args: Parameters<TeamRepository['createTemplate']>) => this.teamRepo.createTemplate(...args)
+  updateTeamTemplate = (...args: Parameters<TeamRepository['updateTemplate']>) => this.teamRepo.updateTemplate(...args)
+  deleteTeamTemplate = (...args: Parameters<TeamRepository['deleteTemplate']>) => this.teamRepo.deleteTemplate(...args)
+  getTeamTemplate = (...args: Parameters<TeamRepository['getTemplate']>) => this.teamRepo.getTemplate(...args)
+  getAllTeamTemplates = () => this.teamRepo.getAllTemplates()
+  createTeamInstance = (...args: Parameters<TeamRepository['createInstance']>) => this.teamRepo.createInstance(...args)
+  updateTeamInstance = (...args: Parameters<TeamRepository['updateInstance']>) => this.teamRepo.updateInstance(...args)
+  deleteTeamInstance = (...args: Parameters<TeamRepository['deleteInstance']>) => this.teamRepo.deleteInstance(...args)
+  getTeamInstance = (...args: Parameters<TeamRepository['getInstance']>) => this.teamRepo.getInstance(...args)
+  getAllTeamInstances = () => this.teamRepo.getAllInstances()
+  upsertTeamMember = (...args: Parameters<TeamRepository['upsertMember']>) => this.teamRepo.upsertMember(...args)
+  updateTeamMember = (...args: Parameters<TeamRepository['updateMember']>) => this.teamRepo.updateMember(...args)
+  updateTeamMemberStatus = (...args: Parameters<TeamRepository['updateMemberStatus']>) => this.teamRepo.updateMemberStatus(...args)
+  getTeamMembersByInstance = (...args: Parameters<TeamRepository['getMembersByInstance']>) => this.teamRepo.getMembersByInstance(...args)
+  addTeamMessage = (...args: Parameters<TeamRepository['addMessage']>) => this.teamRepo.addMessage(...args)
+  getTeamMessages = (...args: Parameters<TeamRepository['getMessages']>) => this.teamRepo.getMessages(...args)
 
   // ─── 内置数据初始化 ───
 

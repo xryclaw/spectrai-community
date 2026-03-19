@@ -5,6 +5,7 @@
 
 import { contextBridge, ipcRenderer, IpcRendererEvent, clipboard } from 'electron'
 import { IPC } from '../shared/constants'
+import { invokeWithValidation } from './ipcValidation'
 
 /**
  * 暴露给渲染进程的 API
@@ -46,8 +47,8 @@ contextBridge.exposeInMainWorld('spectrAI', {
     selectDirectory: () => ipcRenderer.invoke('dialog:select-directory'),
     selectFile: () => ipcRenderer.invoke(IPC.DIALOG_SELECT_FILE),
     getRecentDirectories: (limit?: number) => ipcRenderer.invoke(IPC.DIRECTORY_GET_RECENT, limit),
-    toggleDirectoryPin: (dirPath: string) => ipcRenderer.invoke(IPC.DIRECTORY_TOGGLE_PIN, dirPath),
-    removeDirectory: (dirPath: string) => ipcRenderer.invoke(IPC.DIRECTORY_REMOVE, dirPath),
+    toggleDirectoryPin: (dirPath: string) => invokeWithValidation(IPC.DIRECTORY_TOGGLE_PIN, dirPath),
+    removeDirectory: (dirPath: string) => invokeWithValidation(IPC.DIRECTORY_REMOVE, dirPath),
   },
 
   // ==================== Update API ====================
@@ -68,10 +69,10 @@ contextBridge.exposeInMainWorld('spectrAI', {
   session: {
     create: (config: any) => ipcRenderer.invoke(IPC.SESSION_CREATE, config),
 
-    terminate: (sessionId: string) => ipcRenderer.invoke(IPC.SESSION_TERMINATE, sessionId),
+    terminate: (sessionId: string) => invokeWithValidation(IPC.SESSION_TERMINATE, sessionId),
 
     sendInput: (sessionId: string, input: string) =>
-      ipcRenderer.invoke(IPC.SESSION_SEND_INPUT, sessionId, input),
+      invokeWithValidation(IPC.SESSION_SEND_INPUT, sessionId, input),
 
     confirm: (sessionId: string, confirmed: boolean) =>
       ipcRenderer.invoke(IPC.SESSION_CONFIRM, sessionId, confirmed),
@@ -104,7 +105,7 @@ contextBridge.exposeInMainWorld('spectrAI', {
       ipcRenderer.invoke(IPC.SESSION_AI_RENAME, sessionId),
 
     delete: (sessionId: string) =>
-      ipcRenderer.invoke(IPC.SESSION_DELETE, sessionId),
+      invokeWithValidation(IPC.SESSION_DELETE, sessionId),
 
     // 事件监听（主进程 → 渲染进程）
     onOutput: (callback: (sessionId: string, data: any) => void) => {
@@ -156,7 +157,7 @@ contextBridge.exposeInMainWorld('spectrAI', {
 
     // SDK V2: 结构化消息发送
     sendMessage: (sessionId: string, text: string) =>
-      ipcRenderer.invoke(IPC.SESSION_SEND_MESSAGE, sessionId, text),
+      invokeWithValidation(IPC.SESSION_SEND_MESSAGE, sessionId, text),
 
     // SDK V2: 获取对话历史
     getConversation: (sessionId: string) =>
@@ -164,27 +165,27 @@ contextBridge.exposeInMainWorld('spectrAI', {
 
     // SDK V2: 中止会话
     abortSession: (sessionId: string) =>
-      ipcRenderer.invoke(IPC.SESSION_ABORT, sessionId),
+      invokeWithValidation(IPC.SESSION_ABORT, sessionId),
 
     // SDK V2: 权限响应
     respondPermission: (sessionId: string, accept: boolean) =>
-      ipcRenderer.invoke(IPC.SESSION_PERMISSION_RESPOND, sessionId, accept),
+      invokeWithValidation(IPC.SESSION_PERMISSION_RESPOND, sessionId, accept),
 
     // SDK V2: AskUserQuestion 答案
     answerQuestion: (sessionId: string, answers: Record<string, string>) =>
-      ipcRenderer.invoke(IPC.SESSION_ANSWER_QUESTION, sessionId, answers),
+      invokeWithValidation(IPC.SESSION_ANSWER_QUESTION, sessionId, answers),
 
     // SDK V2: ExitPlanMode 审批
     approvePlan: (sessionId: string, approved: boolean) =>
-      ipcRenderer.invoke(IPC.SESSION_APPROVE_PLAN, sessionId, approved),
+      invokeWithValidation(IPC.SESSION_APPROVE_PLAN, sessionId, approved),
 
     // SDK V2: 获取排队中的消息列表
     getQueue: (sessionId: string) =>
-      ipcRenderer.invoke(IPC.SESSION_GET_QUEUE, sessionId),
+      invokeWithValidation(IPC.SESSION_GET_QUEUE, sessionId),
 
     // SDK V2: 清空排队中的消息（用户主动取消）
     clearQueue: (sessionId: string) =>
-      ipcRenderer.invoke(IPC.SESSION_CLEAR_QUEUE, sessionId),
+      invokeWithValidation(IPC.SESSION_CLEAR_QUEUE, sessionId),
 
     // SDK V2: 对话消息事件监听
     onConversationMessage: (callback: (sessionId: string, msg: any) => void) => {
@@ -216,17 +217,17 @@ contextBridge.exposeInMainWorld('spectrAI', {
 
   // ==================== Task API ====================
   task: {
-    create: (task: any) => ipcRenderer.invoke(IPC.TASK_CREATE, task),
+    create: (task: any) => invokeWithValidation(IPC.TASK_CREATE, task),
 
     update: (taskId: string, updates: any) =>
-      ipcRenderer.invoke(IPC.TASK_UPDATE, taskId, updates),
+      invokeWithValidation(IPC.TASK_UPDATE, taskId, updates),
 
-    delete: (taskId: string) => ipcRenderer.invoke(IPC.TASK_DELETE, taskId),
+    delete: (taskId: string) => invokeWithValidation(IPC.TASK_DELETE, taskId),
 
     getAll: () => ipcRenderer.invoke(IPC.TASK_GET_ALL),
 
     startSession: (taskId: string, config?: any) =>
-      ipcRenderer.invoke(IPC.TASK_START_SESSION, taskId, config),
+      invokeWithValidation(IPC.TASK_START_SESSION, taskId, config),
 
     onStatusChange: (callback: (taskId: string, updates: any) => void) => {
       const listener = (_event: IpcRendererEvent, taskId: string, updates: any) => {
@@ -242,19 +243,19 @@ contextBridge.exposeInMainWorld('spectrAI', {
   provider: {
     getAll: () => ipcRenderer.invoke(IPC.PROVIDER_GET_ALL),
     get: (id: string) => ipcRenderer.invoke(IPC.PROVIDER_GET, id),
-    create: (provider: any) => ipcRenderer.invoke(IPC.PROVIDER_CREATE, provider),
-    update: (id: string, updates: any) => ipcRenderer.invoke(IPC.PROVIDER_UPDATE, id, updates),
-    delete: (id: string) => ipcRenderer.invoke(IPC.PROVIDER_DELETE, id),
-    reorder: (orderedIds: string[]) => ipcRenderer.invoke(IPC.PROVIDER_REORDER, orderedIds),
+    create: (provider: any) => invokeWithValidation(IPC.PROVIDER_CREATE, provider),
+    update: (id: string, updates: any) => invokeWithValidation(IPC.PROVIDER_UPDATE, id, updates),
+    delete: (id: string) => invokeWithValidation(IPC.PROVIDER_DELETE, id),
+    reorder: (orderedIds: string[]) => invokeWithValidation(IPC.PROVIDER_REORDER, orderedIds),
     /** 检测 CLI 命令是否已安装，返回 { found: boolean, path: string | null } */
-    checkCli: (command: string) => ipcRenderer.invoke(IPC.PROVIDER_CHECK_CLI, command),
+    checkCli: (command: string) => invokeWithValidation(IPC.PROVIDER_CHECK_CLI, command),
     /**
      * 测试 Claude Code 可执行文件是否可用。
      * - 传入 executablePath：验证该路径的文件是否存在
      * - 不传参数：自动检测系统中的 claude CLI
      * 返回 { found: boolean, path: string | null, error?: string }
      */
-    testExecutable: (executablePath?: string) => ipcRenderer.invoke(IPC.PROVIDER_TEST_EXECUTABLE, executablePath),
+    testExecutable: (executablePath?: string) => invokeWithValidation(IPC.PROVIDER_TEST_EXECUTABLE, executablePath),
   },
 
   // ==================== NVM API ====================
@@ -265,7 +266,7 @@ contextBridge.exposeInMainWorld('spectrAI', {
   // ==================== Search API ====================
   search: {
     logs: (query: string, sessionId?: string, limit?: number) =>
-      ipcRenderer.invoke(IPC.SEARCH_LOGS, query, sessionId, limit)
+      invokeWithValidation(IPC.SEARCH_LOGS, query, sessionId, limit)
   },
 
   // ==================== Usage API ====================
@@ -365,16 +366,16 @@ contextBridge.exposeInMainWorld('spectrAI', {
     getFileDiff:  (repoPath: string, filePath: string, staged?: boolean, commitHash?: string) =>
                     ipcRenderer.invoke(IPC.GIT_GET_FILE_DIFF, repoPath, filePath, staged, commitHash),
     stage:        (repoPath: string, filePaths: string[]) =>
-                    ipcRenderer.invoke(IPC.GIT_STAGE, repoPath, filePaths),
+                    invokeWithValidation(IPC.GIT_STAGE, repoPath, filePaths),
     unstage:      (repoPath: string, filePaths: string[]) =>
-                    ipcRenderer.invoke(IPC.GIT_UNSTAGE, repoPath, filePaths),
+                    invokeWithValidation(IPC.GIT_UNSTAGE, repoPath, filePaths),
     discard:      (repoPath: string, filePaths: string[]) =>
-                    ipcRenderer.invoke(IPC.GIT_DISCARD, repoPath, filePaths),
+                    invokeWithValidation(IPC.GIT_DISCARD, repoPath, filePaths),
     stageAll:     (repoPath: string) => ipcRenderer.invoke(IPC.GIT_STAGE_ALL, repoPath),
     commit:       (repoPath: string, message: string) =>
-                    ipcRenderer.invoke(IPC.GIT_COMMIT, repoPath, message),
-    pull:         (repoPath: string) => ipcRenderer.invoke(IPC.GIT_PULL, repoPath),
-    push:         (repoPath: string) => ipcRenderer.invoke(IPC.GIT_PUSH, repoPath),
+                    invokeWithValidation(IPC.GIT_COMMIT, repoPath, message),
+    pull:         (repoPath: string) => invokeWithValidation(IPC.GIT_PULL, repoPath),
+    push:         (repoPath: string) => invokeWithValidation(IPC.GIT_PUSH, repoPath),
     getLog:       (repoPath: string, limit?: number) =>
                     ipcRenderer.invoke(IPC.GIT_GET_LOG, repoPath, limit),
     getRemoteStatus: (repoPath: string) =>
@@ -385,15 +386,15 @@ contextBridge.exposeInMainWorld('spectrAI', {
 
   worktree: {
     create: (repoPath: string, branch: string, taskId: string) =>
-      ipcRenderer.invoke(IPC.WORKTREE_CREATE, repoPath, branch, taskId),
+      invokeWithValidation(IPC.WORKTREE_CREATE, repoPath, branch, taskId),
     remove: (repoPath: string, worktreePath: string, deleteBranch?: boolean, branchName?: string) =>
-      ipcRenderer.invoke(IPC.WORKTREE_REMOVE, repoPath, worktreePath, deleteBranch, branchName),
+      invokeWithValidation(IPC.WORKTREE_REMOVE, repoPath, worktreePath, deleteBranch, branchName),
     list: (repoPath: string) =>
       ipcRenderer.invoke(IPC.WORKTREE_LIST, repoPath),
     checkMerge: (repoPath: string, worktreePath: string) =>
       ipcRenderer.invoke(IPC.WORKTREE_CHECK_MERGE, repoPath, worktreePath),
     merge: (repoPath: string, branchName: string, options?: { squash?: boolean; message?: string; cleanup?: boolean }) =>
-      ipcRenderer.invoke(IPC.WORKTREE_MERGE, repoPath, branchName, options),
+      invokeWithValidation(IPC.WORKTREE_MERGE, repoPath, branchName, options),
     getDiffSummary: (repoPath: string, worktreePath: string, baseCommit?: string, baseBranch?: string, worktreeBranchHint?: string) =>
       ipcRenderer.invoke(IPC.WORKTREE_DIFF_SUMMARY, repoPath, worktreePath, baseCommit, baseBranch, worktreeBranchHint),
     getFileDiff: (repoPath: string, worktreeBranch: string, filePath: string, baseCommit?: string, baseBranch?: string) =>
@@ -404,23 +405,23 @@ contextBridge.exposeInMainWorld('spectrAI', {
   workspace: {
     list: () => ipcRenderer.invoke(IPC.WORKSPACE_LIST),
     get: (id: string) => ipcRenderer.invoke(IPC.WORKSPACE_GET, id),
-    create: (data: any) => ipcRenderer.invoke(IPC.WORKSPACE_CREATE, data),
-    update: (id: string, data: any) => ipcRenderer.invoke(IPC.WORKSPACE_UPDATE, id, data),
-    delete: (id: string) => ipcRenderer.invoke(IPC.WORKSPACE_DELETE, id),
-    scanRepos: (dirPath: string) => ipcRenderer.invoke(IPC.WORKSPACE_SCAN_REPOS, dirPath),
-    importVscode: (filePath: string) => ipcRenderer.invoke(IPC.WORKSPACE_IMPORT_VSCODE, filePath),
+    create: (data: any) => invokeWithValidation(IPC.WORKSPACE_CREATE, data),
+    update: (id: string, data: any) => invokeWithValidation(IPC.WORKSPACE_UPDATE, id, data),
+    delete: (id: string) => invokeWithValidation(IPC.WORKSPACE_DELETE, id),
+    scanRepos: (dirPath: string) => invokeWithValidation(IPC.WORKSPACE_SCAN_REPOS, dirPath),
+    importVscode: (filePath: string) => invokeWithValidation(IPC.WORKSPACE_IMPORT_VSCODE, filePath),
   },
 
 
   // ==================== File Manager API ====================
   fileManager: {
     listDir: (path: string) => ipcRenderer.invoke('file-manager:list-dir', { path }),
-    openPath: (path: string) => ipcRenderer.invoke('file-manager:open-path', path),
+    openPath: (path: string) => invokeWithValidation('file-manager:open-path', path),
     readFile: (path: string) => ipcRenderer.invoke('file-manager:read-file', path),
-    watchDir: (path: string) => ipcRenderer.invoke('file-manager:watch-dir', path),
-    unwatchDir: (path: string) => ipcRenderer.invoke('file-manager:unwatch-dir', path),
+    watchDir: (path: string) => invokeWithValidation('file-manager:watch-dir', path),
+    unwatchDir: (path: string) => invokeWithValidation('file-manager:unwatch-dir', path),
     writeFile: (path: string, content: string) =>
-      ipcRenderer.invoke('file-manager:write-file', { path, content }),
+      invokeWithValidation('file-manager:write-file', { path, content }),
     onWatchChange: (callback: (event: any) => void) => {
       const handler = (_: IpcRendererEvent, event: any) => callback(event)
       ipcRenderer.on('file-manager:watch-change', handler)
@@ -440,19 +441,19 @@ contextBridge.exposeInMainWorld('spectrAI', {
       ipcRenderer.invoke('file-manager:get-file-diff', filePath),
     /** 创建空文件 */
     createFile: (filePath: string) =>
-      ipcRenderer.invoke('file-manager:create-file', filePath),
+      invokeWithValidation('file-manager:create-file', filePath),
     /** 创建目录 */
     createDir: (dirPath: string) =>
-      ipcRenderer.invoke('file-manager:create-dir', dirPath),
+      invokeWithValidation('file-manager:create-dir', dirPath),
     /** 重命名文件/目录 */
     rename: (oldPath: string, newPath: string) =>
-      ipcRenderer.invoke('file-manager:rename', { oldPath, newPath }),
+      invokeWithValidation('file-manager:rename', { oldPath, newPath }),
     /** 删除文件/目录（移动到回收站） */
     delete: (targetPath: string) =>
-      ipcRenderer.invoke('file-manager:delete', targetPath),
+      invokeWithValidation('file-manager:delete', targetPath),
     /** 在系统文件管理器中显示 */
     showInFolder: (filePath: string) =>
-      ipcRenderer.invoke('file-manager:show-in-folder', filePath),
+      invokeWithValidation('file-manager:show-in-folder', filePath),
   },
 
   // ==================== MCP API ====================
@@ -495,6 +496,45 @@ contextBridge.exposeInMainWorld('spectrAI', {
     fetchSkills: (forceRefresh?: boolean) => ipcRenderer.invoke(IPC.REGISTRY_FETCH_SKILLS, forceRefresh),
     forceRefresh: () => ipcRenderer.invoke(IPC.REGISTRY_FORCE_REFRESH),
     importSkillFromUrl: (url: string) => ipcRenderer.invoke(IPC.SKILL_IMPORT_URL, url),
+  },
+
+  // ==================== Team API ====================
+  team: {
+    // Templates
+    createTemplate: (data: any) => ipcRenderer.invoke(IPC.TEAM_TEMPLATE_CREATE, data),
+    updateTemplate: (id: string, updates: any) => ipcRenderer.invoke(IPC.TEAM_TEMPLATE_UPDATE, id, updates),
+    deleteTemplate: (id: string) => ipcRenderer.invoke(IPC.TEAM_TEMPLATE_DELETE, id),
+    getTemplate: (id: string) => ipcRenderer.invoke(IPC.TEAM_TEMPLATE_GET, id),
+    getAllTemplates: () => ipcRenderer.invoke(IPC.TEAM_TEMPLATE_GET_ALL),
+    // Instances
+    createInstance: (data: any) => ipcRenderer.invoke(IPC.TEAM_INSTANCE_CREATE, data),
+    startInstance: (id: string) => ipcRenderer.invoke(IPC.TEAM_INSTANCE_START, id),
+    stopInstance: (id: string) => ipcRenderer.invoke(IPC.TEAM_INSTANCE_STOP, id),
+    pauseInstance: (id: string) => ipcRenderer.invoke(IPC.TEAM_INSTANCE_PAUSE, id),
+    deleteInstance: (id: string) => ipcRenderer.invoke(IPC.TEAM_INSTANCE_DELETE, id),
+    getInstance: (id: string) => ipcRenderer.invoke(IPC.TEAM_INSTANCE_GET, id),
+    getAllInstances: () => ipcRenderer.invoke(IPC.TEAM_INSTANCE_GET_ALL),
+    // Members
+    updateMember: (memberId: string, updates: any) => ipcRenderer.invoke(IPC.TEAM_MEMBER_UPDATE, memberId, updates),
+    // Conversation
+    sendMessage: (instanceId: string, text: string) => ipcRenderer.invoke(IPC.TEAM_SEND_MESSAGE, instanceId, text),
+    getMessages: (instanceId: string, limit?: number) => ipcRenderer.invoke(IPC.TEAM_GET_MESSAGES, instanceId, limit),
+    // Push events
+    onStatusChange: (callback: (instanceId: string, status: string) => void) => {
+      const listener = (_event: IpcRendererEvent, instanceId: string, status: string) => callback(instanceId, status)
+      ipcRenderer.on(IPC.TEAM_STATUS_CHANGE, listener)
+      return () => ipcRenderer.removeListener(IPC.TEAM_STATUS_CHANGE, listener)
+    },
+    onMemberStatusChange: (callback: (instanceId: string, memberId: string, status: string) => void) => {
+      const listener = (_event: IpcRendererEvent, instanceId: string, memberId: string, status: string) => callback(instanceId, memberId, status)
+      ipcRenderer.on(IPC.TEAM_MEMBER_STATUS_CHANGE, listener)
+      return () => ipcRenderer.removeListener(IPC.TEAM_MEMBER_STATUS_CHANGE, listener)
+    },
+    onMessage: (callback: (instanceId: string, msg: any) => void) => {
+      const listener = (_event: IpcRendererEvent, instanceId: string, msg: any) => callback(instanceId, msg)
+      ipcRenderer.on(IPC.TEAM_MESSAGE, listener)
+      return () => ipcRenderer.removeListener(IPC.TEAM_MESSAGE, listener)
+    },
   },
 
 })

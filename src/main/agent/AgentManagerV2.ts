@@ -20,6 +20,11 @@ import type { AIProvider } from '../../shared/types'
 import { isProviderAvailable, checkProviderAvailability } from './providerAvailability'
 import { MCPConfigGenerator } from './MCPConfigGenerator'
 import { GitWorktreeService } from '../git/GitWorktreeService'
+import {
+  getPositiveTimeout,
+  resolveBridgeWaitTimeoutMs as resolveBridgeWaitTimeoutByPolicy,
+} from './managerV2/TimeoutPolicy'
+import { formatSpectralError, toSpectralError } from '../errors/SpectralError'
 
 interface ManagedAgent {
   info: AgentInfo
@@ -31,9 +36,6 @@ interface ManagedAgent {
 
 const DEFAULT_WAIT_AGENT_TIMEOUT_MS = 600000
 const DEFAULT_WAIT_AGENT_IDLE_TIMEOUT_MS = 300000
-const DEFAULT_CODEX_TOOL_CALL_TIMEOUT_MS = 120000
-const DEFAULT_CODEX_TOOL_CALL_SAFETY_MS = 15000
-const DEFAULT_CODEX_WAIT_MAX_MS = 90000
 
 export class AgentManagerV2 extends EventEmitter {
   private adapterRegistry: AdapterRegistry
@@ -308,7 +310,7 @@ export class AgentManagerV2 extends EventEmitter {
     }
 
     return new Promise((resolve) => {
-      const timeoutMs = this.getPositiveTimeout(timeout, DEFAULT_WAIT_AGENT_IDLE_TIMEOUT_MS)
+      const timeoutMs = getPositiveTimeout(timeout, DEFAULT_WAIT_AGENT_IDLE_TIMEOUT_MS)
 
       const timer = setTimeout(() => {
         // 超时
@@ -343,7 +345,7 @@ export class AgentManagerV2 extends EventEmitter {
     }
 
     return new Promise((resolve) => {
-      const timeoutMs = this.getPositiveTimeout(timeout, DEFAULT_WAIT_AGENT_TIMEOUT_MS)
+      const timeoutMs = getPositiveTimeout(timeout, DEFAULT_WAIT_AGENT_TIMEOUT_MS)
 
       const timer = setTimeout(() => {
         const waiters = this.waiters.get(agentId) || []
@@ -532,42 +534,9 @@ export class AgentManagerV2 extends EventEmitter {
     return session?.workingDirectory || process.cwd()
   }
 
-  private getPositiveTimeout(value: unknown, fallback: number): number {
-    const n = Number(value)
-    if (!Number.isFinite(n) || n <= 0) return fallback
-    return n
-  }
-
-  private getEnvTimeoutMs(name: string, fallback: number): number {
-    const raw = process.env[name]
-    if (!raw) return fallback
-    return this.getPositiveTimeout(raw, fallback)
-  }
-
   private isCodexParentSession(parentSessionId: string): boolean {
     const session = this.sessionManager.getSession(parentSessionId)
     return session?.provider?.id === 'codex'
-  }
-
-  /**
-   * Codex MCP tool call has a hard timeout window (commonly 120s).
-   * Keep wait_* calls under a safe bound to avoid tool-level timeout errors.
-   */
-  private getCodexSafeWaitMaxMs(): number {
-    const toolCallTimeoutMs = this.getEnvTimeoutMs(
-      'SPECTRAI_CODEX_TOOL_CALL_TIMEOUT_MS',
-      DEFAULT_CODEX_TOOL_CALL_TIMEOUT_MS,
-    )
-    const safetyBufferMs = this.getEnvTimeoutMs(
-      'SPECTRAI_CODEX_TOOL_CALL_SAFETY_MS',
-      DEFAULT_CODEX_TOOL_CALL_SAFETY_MS,
-    )
-    const configuredWaitMaxMs = this.getEnvTimeoutMs(
-      'SPECTRAI_CODEX_WAIT_MAX_MS',
-      DEFAULT_CODEX_WAIT_MAX_MS,
-    )
-    const budgetedMax = Math.max(5000, toolCallTimeoutMs - safetyBufferMs)
-    return Math.max(5000, Math.min(configuredWaitMaxMs, budgetedMax))
   }
 
   private resolveBridgeWaitTimeoutMs(
@@ -576,17 +545,21 @@ export class AgentManagerV2 extends EventEmitter {
     fallbackTimeout: number,
     method: 'wait_agent' | 'wait_agent_idle',
   ): number {
-    const requested = this.getPositiveTimeout(requestedTimeout, fallbackTimeout)
-    if (!this.isCodexParentSession(parentSessionId)) return requested
-
-    const codexSafeMax = this.getCodexSafeWaitMaxMs()
-    if (requested <= codexSafeMax) return requested
-
-    console.warn(
-      `[AgentManagerV2] Clamped ${method} timeout for codex parent session ` +
-      `(requested=${requested}ms, effective=${codexSafeMax}ms).`,
+    const requested = getPositiveTimeout(requestedTimeout, fallbackTimeout)
+    const effective = resolveBridgeWaitTimeoutByPolicy(
+      this.isCodexParentSession(parentSessionId),
+      requestedTimeout,
+      fallbackTimeout,
     )
-    return codexSafeMax
+
+    if (requested !== effective && this.isCodexParentSession(parentSessionId)) {
+      console.warn(
+        `[AgentManagerV2] Clamped ${method} timeout for codex parent session ` +
+        `(requested=${requested}ms, effective=${effective}ms).`,
+      )
+    }
+
+    return effective
   }
 
   private sanitizeWorktreeToken(value: unknown, fallback: string, maxLength = 64): string {
@@ -1088,7 +1061,9 @@ export class AgentManagerV2 extends EventEmitter {
         }
       }
     } catch (err: any) {
-      respond({ id, error: err.message || 'Internal error' })
+      const normalized = toSpectralError(err, 'Internal error')
+      console.error(`[AgentManagerV2] bridge request failed: ${formatSpectralError(normalized)}`, err)
+      respond({ id, error: normalized.message || 'Internal error' })
     }
   }
 }

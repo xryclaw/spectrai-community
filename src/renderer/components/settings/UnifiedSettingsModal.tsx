@@ -57,50 +57,101 @@ interface Props {
 
 export default function UnifiedSettingsModal({ onClose, initialTab = 'general' }: Props) {
   const [activeTab, setActiveTab] = useState<string>(initialTab ?? 'general')
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
+  const [showLeaveConfirm, setShowLeaveConfirm] = useState(false)
   const { fetchSettings } = useSettingsStore()
 
   useEffect(() => {
     fetchSettings()  // 确保代理设置最新
   }, [])
 
+  const handleRequestClose = useCallback(() => {
+    if (hasUnsavedChanges) {
+      setShowLeaveConfirm(true)
+      return
+    }
+    onClose()
+  }, [hasUnsavedChanges, onClose])
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      if (showLeaveConfirm) {
+        setShowLeaveConfirm(false)
+        return
+      }
+      handleRequestClose()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [handleRequestClose, showLeaveConfirm])
+
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
-    >
-      <div
-        className="bg-bg-secondary rounded-xl shadow-2xl w-full max-w-2xl border border-border max-h-[85vh] flex flex-col"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* ── 标题栏 ── */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-border shrink-0">
+    <div className="fixed inset-0 z-[120] bg-bg-primary">
+      <div className="h-full flex flex-col">
+        {/* ── 顶部栏 ── */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-border bg-bg-secondary shrink-0">
           <div className="flex items-center gap-3">
             <h2 className="text-base font-semibold text-text-primary">设置</h2>
           </div>
           <button
-            onClick={onClose}
+            onClick={handleRequestClose}
             className="text-text-muted hover:text-text-primary btn-transition"
+            aria-label="关闭设置"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        {/* ── Tab 导航 ── */}
-        <div className="flex items-center border-b border-border px-4 shrink-0 overflow-x-auto">
-          {/* App 通用分组 */}
-          {TABS.filter((t) => t.group === 'app').map((t) => (
-            <TabButton key={t.id} id={t.id} label={t.label} active={activeTab} onClick={setActiveTab} />
-          ))}
+        <div className="flex-1 min-h-0 flex">
+          {/* ── 左侧 Tab 导航 ── */}
+          <aside className="w-[240px] border-r border-border bg-bg-secondary/70 shrink-0 p-3 overflow-y-auto">
+            <div className="space-y-1">
+              {TABS.filter((t) => t.group === 'app').map((t) => (
+                <TabButton key={t.id} id={t.id} label={t.label} active={activeTab} onClick={setActiveTab} />
+              ))}
+            </div>
+          </aside>
+
+          {/* ── 右侧内容区 ── */}
+          <section className="flex-1 min-w-0 overflow-y-auto bg-bg-primary">
+            <div className="max-w-5xl px-6 py-5">
+              <div className={activeTab === 'general' ? '' : 'hidden'}>
+                <GeneralTab onDirtyChange={setHasUnsavedChanges} />
+              </div>
+              {activeTab === 'theme'     && <ThemeTab />}
+              {activeTab === 'workspace' && <WorkspaceTab />}
+              {activeTab === 'mcp'       && <McpManager />}
+              {activeTab === 'skills'    && <SkillManager />}
+              {activeTab === 'logs'      && <LogTab />}
+            </div>
+          </section>
         </div>
 
-        {/* ── 内容区 ── */}
-        <div className="flex-1 overflow-y-auto px-5 py-4">
-          {activeTab === 'general'   && <GeneralTab />}
-          {activeTab === 'theme'     && <ThemeTab />}
-          {activeTab === 'workspace' && <WorkspaceTab />}
-          {activeTab === 'mcp'       && <McpManager />}
-          {activeTab === 'skills'    && <SkillManager />}
-          {activeTab === 'logs'      && <LogTab />}
-        </div>
+        {showLeaveConfirm && (
+          <div className="fixed inset-0 z-[130] flex items-center justify-center bg-black/50 backdrop-blur-sm">
+            <div className="w-full max-w-sm rounded-xl border border-border bg-bg-secondary shadow-2xl p-5">
+              <h3 className="text-sm font-semibold text-text-primary">确认离开设置</h3>
+              <p className="mt-2 text-xs text-text-secondary leading-relaxed">
+                你有未保存的更改，确认离开吗？
+              </p>
+              <div className="mt-4 flex items-center justify-end gap-2">
+                <button
+                  onClick={() => setShowLeaveConfirm(false)}
+                  className="px-3 py-1.5 text-xs rounded bg-bg-hover text-text-secondary hover:text-text-primary hover:bg-bg-tertiary btn-transition"
+                >
+                  继续编辑
+                </button>
+                <button
+                  onClick={onClose}
+                  className="px-3 py-1.5 text-xs rounded bg-accent-red text-white hover:bg-accent-red/90 btn-transition"
+                >
+                  放弃更改
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )
@@ -118,10 +169,10 @@ function TabButton({
     <button
       onClick={() => onClick(id)}
       className={[
-        'px-3 py-2.5 text-sm font-medium btn-transition border-b-2 whitespace-nowrap shrink-0',
+        'w-full px-3 py-2.5 text-sm font-medium rounded-md btn-transition text-left',
         active === id
-          ? 'text-accent-blue border-accent-blue'
-          : 'text-text-secondary border-transparent hover:text-text-primary',
+          ? 'bg-accent-blue/15 text-accent-blue border border-accent-blue/40'
+          : 'text-text-secondary border border-transparent hover:text-text-primary hover:bg-bg-hover',
       ].join(' ')}
     >
       {label}
@@ -132,7 +183,7 @@ function TabButton({
 // ══════════════════════════════════════════════
 // ── 通用 Tab ──
 // ══════════════════════════════════════════════
-function GeneralTab() {
+function GeneralTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => void }) {
   const { settings, updateSetting, updateSettings } = useSettingsStore()
 
   // ── 代理设置本地状态 ──
@@ -142,6 +193,7 @@ function GeneralTab() {
   const [proxyUsername, setProxyUsername] = useState('')
   const [proxyPassword, setProxyPassword] = useState('')
   const [proxySaved,    setProxySaved]    = useState(false)
+  const [savingProxy,   setSavingProxy]   = useState(false)
 
   // 从 store 初始化本地状态
   useEffect(() => {
@@ -153,18 +205,47 @@ function GeneralTab() {
   }, [settings.proxyType, settings.proxyHost, settings.proxyPort, settings.proxyUsername, settings.proxyPassword])
 
   const handleSaveProxy = async () => {
-    await updateSettings({
-      proxyType,
-      proxyHost:     proxyType !== 'none' ? proxyHost     : '',
-      proxyPort:     proxyType !== 'none' ? proxyPort     : '',
-      proxyUsername: proxyType !== 'none' ? proxyUsername : '',
-      proxyPassword: proxyType !== 'none' ? proxyPassword : '',
-    })
-    setProxySaved(true)
-    setTimeout(() => setProxySaved(false), 2000)
+    if (savingProxy) return
+    setSavingProxy(true)
+    try {
+      await updateSettings({
+        proxyType,
+        proxyHost:     proxyType !== 'none' ? proxyHost     : '',
+        proxyPort:     proxyType !== 'none' ? proxyPort     : '',
+        proxyUsername: proxyType !== 'none' ? proxyUsername : '',
+        proxyPassword: proxyType !== 'none' ? proxyPassword : '',
+      })
+      setProxySaved(true)
+      setTimeout(() => setProxySaved(false), 2000)
+    } finally {
+      setSavingProxy(false)
+    }
   }
 
   const inputCls = 'w-full px-2.5 py-1.5 rounded bg-bg-primary border border-border text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-blue/60'
+
+  const savedProxyType = settings.proxyType || 'none'
+  const savedProxyHost = savedProxyType !== 'none' ? (settings.proxyHost || '') : ''
+  const savedProxyPort = savedProxyType !== 'none' ? (settings.proxyPort || '') : ''
+  const savedProxyUsername = savedProxyType !== 'none' ? (settings.proxyUsername || '') : ''
+  const savedProxyPassword = savedProxyType !== 'none' ? (settings.proxyPassword || '') : ''
+
+  const currentProxyHost = proxyType !== 'none' ? proxyHost : ''
+  const currentProxyPort = proxyType !== 'none' ? proxyPort : ''
+  const currentProxyUsername = proxyType !== 'none' ? proxyUsername : ''
+  const currentProxyPassword = proxyType !== 'none' ? proxyPassword : ''
+
+  const isProxyDirty =
+    proxyType !== savedProxyType ||
+    currentProxyHost !== savedProxyHost ||
+    currentProxyPort !== savedProxyPort ||
+    currentProxyUsername !== savedProxyUsername ||
+    currentProxyPassword !== savedProxyPassword
+
+  useEffect(() => {
+    onDirtyChange?.(isProxyDirty)
+    return () => onDirtyChange?.(false)
+  }, [isProxyDirty, onDirtyChange])
 
   const hasProxy = settings.proxyType && settings.proxyType !== 'none'
   const [updateState, setUpdateState] = useState<{
@@ -291,9 +372,10 @@ function GeneralTab() {
           <div className="flex items-center gap-3">
             <button
               onClick={handleSaveProxy}
-              className="px-3 py-1.5 bg-accent-blue text-white rounded text-xs transition-opacity hover:opacity-90"
+              disabled={savingProxy}
+              className="px-3 py-1.5 bg-accent-blue text-white rounded text-xs transition-opacity hover:opacity-90 disabled:opacity-60 disabled:cursor-not-allowed"
             >
-              保存代理设置
+              {savingProxy ? '保存中...' : '保存代理设置'}
             </button>
             {proxySaved && (
               <span className="flex items-center gap-1 text-xs text-green-500">

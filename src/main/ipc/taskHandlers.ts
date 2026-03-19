@@ -9,6 +9,7 @@ import { GitWorktreeService } from '../git/GitWorktreeService'
 import { injectWorkspaceSection } from '../agent/supervisorPrompt'
 import { v4 as uuidv4 } from 'uuid'
 import type { IpcDependencies } from './index'
+import { failInternalResult, failResult, IPC_ERROR_CODES } from './errorResult'
 
 export function registerTaskHandlers(deps: IpcDependencies): void {
   const { database, sessionManagerV2, concurrencyGuard, taskCoordinator } = deps
@@ -38,7 +39,7 @@ export function registerTaskHandlers(deps: IpcDependencies): void {
       if (taskData.worktreeEnabled && taskData.workspaceId && taskData.gitBranch) {
         const workspace = database.getWorkspace(taskData.workspaceId)
         if (!workspace) {
-          return { success: false, error: '工作区不存在' }
+          return failResult(IPC_ERROR_CODES.NOT_FOUND, '工作区不存在')
         }
 
         const worktreePaths: Record<string, string> = {}
@@ -85,7 +86,7 @@ export function registerTaskHandlers(deps: IpcDependencies): void {
             }
           }
           console.error('[IPC] Multi-repo worktree creation failed:', wtErr)
-          return { success: false, error: `多仓库 Worktree 创建失败: ${wtErr.message}` }
+          return failResult(IPC_ERROR_CODES.EXTERNAL_OPERATION_FAILED, `多仓库 Worktree 创建失败: ${wtErr.message}`)
         }
       }
       // 路径2：单仓库 worktree 创建（向后兼容）
@@ -100,7 +101,7 @@ export function registerTaskHandlers(deps: IpcDependencies): void {
           taskData.gitBranch = result.branch
         } catch (wtErr: any) {
           console.error('[IPC] Worktree creation failed:', wtErr)
-          return { success: false, error: `Worktree 创建失败: ${wtErr.message}` }
+          return failResult(IPC_ERROR_CODES.EXTERNAL_OPERATION_FAILED, `Worktree 创建失败: ${wtErr.message}`)
         }
       }
 
@@ -108,7 +109,7 @@ export function registerTaskHandlers(deps: IpcDependencies): void {
       return { success: true, taskId: created.id }
     } catch (error: any) {
       console.error('[IPC] TASK_CREATE error:', error)
-      return { success: false, error: error.message }
+      return failInternalResult(error)
     }
   })
 
@@ -117,7 +118,7 @@ export function registerTaskHandlers(deps: IpcDependencies): void {
       database.updateTask(taskId, updates)
       return { success: true }
     } catch (error: any) {
-      return { success: false, error: error.message }
+      return failInternalResult(error)
     }
   })
 
@@ -162,7 +163,7 @@ export function registerTaskHandlers(deps: IpcDependencies): void {
       database.deleteTask(taskId)
       return { success: true }
     } catch (error: any) {
-      return { success: false, error: error.message }
+      return failInternalResult(error)
     }
   })
 
@@ -179,7 +180,7 @@ export function registerTaskHandlers(deps: IpcDependencies): void {
     try {
       const task = database.getTask(taskId)
       if (!task) {
-        return { success: false, error: '任务不存在' }
+        return failResult(IPC_ERROR_CODES.NOT_FOUND, '任务不存在')
       }
 
       const allSessions = database.getAllSessions()
@@ -193,7 +194,7 @@ export function registerTaskHandlers(deps: IpcDependencies): void {
 
       const resourceCheck = concurrencyGuard.checkResources()
       if (!resourceCheck.canCreate) {
-        return { success: false, error: resourceCheck.reason }
+        return failResult(IPC_ERROR_CODES.RESOURCE_EXHAUSTED, resourceCheck.reason || '资源不足，无法创建新会话')
       }
 
       let workDir = config?.workingDirectory || process.cwd()
@@ -295,7 +296,7 @@ export function registerTaskHandlers(deps: IpcDependencies): void {
       return { success: true, sessionId, reused: false }
     } catch (error: any) {
       console.error('[IPC] TASK_START_SESSION error:', error)
-      return { success: false, error: error.message }
+      return failInternalResult(error)
     }
   })
 

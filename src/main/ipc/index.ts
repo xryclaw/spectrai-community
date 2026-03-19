@@ -16,6 +16,7 @@ import type { TaskSessionCoordinator } from '../task/TaskSessionCoordinator'
 import type { AgentManagerV2 } from '../agent/AgentManagerV2'
 import type { SessionManagerV2 } from '../session/SessionManagerV2'
 import type { UpdateManager } from '../update/UpdateManager'
+import type { TeamOrchestrator } from '../agent/team/TeamOrchestrator'
 // ★ 公共工具从 shared.ts 导出，避免 handler → index → handler 循环依赖
 export { sendToRenderer, aiRenamingLocks, performAiRename } from './shared'
 
@@ -39,6 +40,7 @@ export interface IpcDependencies {
   agentBridgePort?: number
   taskCoordinator?: TaskSessionCoordinator
   updateManager?: UpdateManager
+  teamOrchestrator?: TeamOrchestrator
 }
 
 // 各子模块 handler 注册函数
@@ -54,6 +56,7 @@ import { registerMcpHandlers } from './mcpHandlers'
 import { registerSkillHandlers } from './skillHandlers'
 import { registerRegistryHandlers } from './registryHandlers'
 import { registerUpdateHandlers } from './updateHandlers'
+import { registerTeamHandlers } from './teamHandlers'
 import type { FileChangeTracker } from '../tracker/FileChangeTracker'
 
 // re-export wireSessionManagerV2Events from systemHandlers
@@ -76,6 +79,7 @@ export function registerIpcHandlers(deps: IpcDependencies, fileChangeTracker?: F
   registerMcpHandlers(deps)
   registerSkillHandlers(deps)
   registerRegistryHandlers(deps)
+  registerTeamHandlers(deps)
   if (deps.updateManager) {
     registerUpdateHandlers(deps.updateManager)
   }

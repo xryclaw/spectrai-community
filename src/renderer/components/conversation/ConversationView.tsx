@@ -26,6 +26,7 @@ import AskUserQuestionPanel from './AskUserQuestionPanel'
 import PlanApprovalPanel from './PlanApprovalPanel'
 import CrossSessionSearch from './CrossSessionSearch'
 import { isPrimaryModifierPressed, toPlatformShortcutLabel } from '../../utils/shortcut'
+import { ensureIpcSuccess, extractIpcErrorMessage } from '../../utils/ipcError'
 
 
 // ---- Provider 颜色映射 ----
@@ -263,30 +264,37 @@ const ConversationView: React.FC<ConversationViewProps> = ({ sessionId }) => {
   // 从后端刷新队列状态
   const refreshQueue = useCallback(async () => {
     try {
-      const result = await window.spectrAI.session.getQueue(sessionId)
+      const rawResult = await window.spectrAI.session.getQueue(sessionId)
+      const result = ensureIpcSuccess(rawResult, '获取排队消息失败') as { success?: boolean; messages?: QueuedMessage[] }
       if (result?.success && result.messages) {
         setQueuedMessages(result.messages)
         if (result.messages.length === 0) {
           setQueueHintText('')
         }
       }
-    } catch { /* ignore */ }
+    } catch (err) {
+      setQueueHintText(extractIpcErrorMessage(err, '获取排队消息失败'))
+    }
   }, [sessionId])
 
   const sendWithSmartScheduling = useCallback(async (text: string) => {
-    const dispatch = await sendMessage(text)
-    if (!dispatch?.scheduled) return
+    try {
+      const dispatch = await sendMessage(text)
+      if (!dispatch?.scheduled) return
 
-    if (dispatch.reason === 'session_starting') {
-      setQueueHintText('会话仍在启动中，消息已缓存')
-    } else if (dispatch.strategy === 'interrupt_now') {
-      setQueueHintText('已打断并排队，下一轮优先处理')
-    } else {
-      setQueueHintText('当前任务执行中，消息已排队')
+      if (dispatch.reason === 'session_starting') {
+        setQueueHintText('会话仍在启动中，消息已缓存')
+      } else if (dispatch.strategy === 'interrupt_now') {
+        setQueueHintText('已打断并排队，下一轮优先处理')
+      } else {
+        setQueueHintText('当前任务执行中，消息已排队')
+      }
+
+      // 从后端获取最新队列内容
+      await refreshQueue()
+    } catch (err) {
+      setQueueHintText(extractIpcErrorMessage(err, '消息发送失败'))
     }
-
-    // 从后端获取最新队列内容
-    await refreshQueue()
   }, [sendMessage, refreshQueue])
 
   // 当 streaming 结束时，从后端刷新队列状态；若队列已空则清除提示
@@ -580,10 +588,13 @@ const ConversationView: React.FC<ConversationViewProps> = ({ sessionId }) => {
                   <button
                     onClick={async () => {
                       try {
-                        await window.spectrAI.session.clearQueue(sessionId)
+                        const result = await window.spectrAI.session.clearQueue(sessionId)
+                        ensureIpcSuccess(result, '取消排队消息失败')
                         setQueuedMessages([])
                         setQueueHintText('')
-                      } catch { /* ignore */ }
+                      } catch (err) {
+                        setQueueHintText(extractIpcErrorMessage(err, '取消排队消息失败'))
+                      }
                     }}
                     className="p-0.5 rounded hover:bg-accent-blue/20 transition-colors flex-shrink-0"
                     title="取消所有排队消息"

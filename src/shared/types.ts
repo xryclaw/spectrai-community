@@ -238,6 +238,12 @@ export interface SessionConfig {
   worktreePath?: string
   /** worktree 所在分支名 */
   worktreeBranch?: string
+  /** 创建 worktree 时的基线分支名 */
+  worktreeBaseBranch?: string
+  /** 创建 worktree 时源仓库 HEAD commit（用于后续 diff） */
+  worktreeBaseCommit?: string
+  /** worktree 分支 HEAD commit（分支清理后仍可用于 diff） */
+  worktreeBranchCommit?: string
   /** worktree 来源仓库根路径（用于清理时定位） */
   worktreeSourceRepo?: string
   /** 关联的工作区 ID（新建会话时选择工作区模式时传入） */
@@ -246,6 +252,12 @@ export interface SessionConfig {
   additionalDirectories?: string[]
   /** 追加到系统提示的内容（内部使用，用于注入 worktree 等规则，确保每次会话生效） */
   systemPromptAppend?: string
+  /** 自主任务模式 */
+  autonomousMode?: boolean
+  /** 自主任务目标描述 */
+  autonomousGoal?: string
+  /** 自主任务允许使用的 Provider ID 列表 */
+  allowedProviderIds?: string[]
 }
 
 export type SessionStatus =
@@ -728,8 +740,8 @@ export interface TrackedFileChange {
 
 export type McpTransport = 'stdio' | 'http' | 'sse'
 export type McpCategory = 'filesystem' | 'database' | 'web' | 'code' | 'productivity' | 'custom'
-export type McpSource = 'builtin' | 'registry' | 'github' | 'local'
-export type McpInstallMethod = 'npm' | 'pip' | 'binary' | 'builtin'
+export type McpSource = 'builtin' | 'registry' | 'github' | 'local' | 'custom'
+export type McpInstallMethod = 'npm' | 'pip' | 'binary' | 'builtin' | 'manual'
 
 export interface McpConfigSchema {
   type: 'object'
@@ -787,7 +799,7 @@ export interface McpServer {
 // Skill 技能模板类型
 // ─────────────────────────────────────────────────────────────
 
-export type SkillType = 'prompt' | 'native'
+export type SkillType = 'prompt' | 'native' | 'orchestration'
 export type SkillSource = 'builtin' | 'marketplace' | 'local' | 'custom'
 
 export interface SkillVariable {
@@ -818,6 +830,8 @@ export interface Skill {
     providerId: string
     rawContent: string
   }
+  // ---- Orchestration Skill（多 Provider 编排） ----
+  orchestrationConfig?: Record<string, unknown>
   /** 使用此 Skill 所需的 MCP ID 列表 */
   requiredMcps?: string[]
   isInstalled: boolean
@@ -860,5 +874,125 @@ export interface ProviderCapability {
   providerId: string
   mcpSupport: ProviderMcpCapability
   skillSupport: ProviderSkillCapability
+}
+
+// ---- 自主任务工作流 ----
+
+export type WorkflowPhase =
+  | 'brainstorming'
+  | 'confirming'
+  | 'planning'
+  | 'waiting_approval'
+  | 'executing'
+  | 'validating'
+  | 'delivering'
+  | 'done'
+  | 'failed'
+
+export interface WorkflowState {
+  workflowId: string
+  sessionId: string
+  goal: string
+  phase: WorkflowPhase
+  approved: boolean
+  planContent?: string
+  version: number
+  createdAt: string
+  updatedAt: string
+}
+
+export interface WorkflowStep {
+  stepId: string
+  workflowId: string
+  title: string
+  ownerRole?: string
+  status: 'pending' | 'running' | 'completed' | 'failed'
+  dependsOn?: string
+  evidence?: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface WorkflowEvent {
+  eventId: string
+  workflowId: string
+  type: string
+  payload?: string
+  createdAt: string
+}
+
+export interface DeliveryReport {
+  summary: string
+  keyChanges: string[]
+  validationEvidence: string[]
+  risks: string[]
+  failedSteps: string[]
+}
+
+// ─────────────────────────────────────────────────────────────
+// Team Agent 类型
+// ─────────────────────────────────────────────────────────────
+
+export type TeamRole = 'leader' | 'architect' | 'developer' | 'reviewer' | 'qa' | 'custom'
+export type TeamInstanceStatus = 'idle' | 'running' | 'paused' | 'completed' | 'failed'
+export type TeamMemberStatus = 'idle' | 'working' | 'reviewing' | 'blocked' | 'done' | 'error'
+
+/** 模板中的成员定义 */
+export interface TeamTemplateMember {
+  role: TeamRole
+  name: string
+  systemPrompt: string
+  providerId: string
+  mode: 'supervisor' | 'member'
+}
+
+/** 团队模板（可复用的团队配置） */
+export interface TeamTemplate {
+  id: string
+  name: string
+  description: string
+  members: TeamTemplateMember[]
+  createdAt: string
+  updatedAt: string
+}
+
+/** 团队实例（运行中的团队） */
+export interface TeamInstance {
+  id: string
+  templateId: string
+  name: string
+  workingDirectory: string
+  status: TeamInstanceStatus
+  members: TeamInstanceMember[]
+  createdAt: string
+  updatedAt: string
+  completedAt?: string
+}
+
+/** 团队实例中的成员（关联到 Agent 会话） */
+export interface TeamInstanceMember {
+  id: string
+  teamInstanceId: string
+  role: TeamRole
+  name: string
+  systemPrompt: string
+  providerId: string
+  mode: 'supervisor' | 'member'
+  status: TeamMemberStatus
+  agentId?: string
+  sessionId?: string
+  currentTask?: string
+  updatedAt: string
+}
+
+/** 团队对话消息 */
+export interface TeamMessage {
+  id: string
+  teamInstanceId: string
+  role: 'user' | 'system' | 'member'
+  memberName?: string
+  memberRole?: TeamRole
+  content: string
+  timestamp: string
 }
 

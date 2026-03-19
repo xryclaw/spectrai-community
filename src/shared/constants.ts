@@ -171,6 +171,34 @@ export const IPC = {
   SKILL_IMPORT_URL: 'skill:import-url',
   /** 主进程通知渲染进程：有新 Skill 通过 MCP 安装，需要刷新列表 */
   SKILL_INSTALLED_NOTIFY: 'skill:installed-notify',
+
+  // 自主任务工作流
+  WORKFLOW_PHASE_CHANGE: 'workflow:phase-change',   // 主进程 → 渲染进程：阶段变更通知
+  WORKFLOW_APPROVE:      'workflow:approve',          // 渲染进程 → 主进程：批准计划
+  WORKFLOW_REJECT:       'workflow:reject',           // 渲染进程 → 主进程：拒绝计划
+  WORKFLOW_GET:          'workflow:get',              // 渲染进程 → 主进程：获取单个 workflow
+  WORKFLOW_GET_ALL:      'workflow:get-all',          // 渲染进程 → 主进程：获取会话所有 workflow
+
+  // Team Agent
+  TEAM_TEMPLATE_CREATE:       'team:template-create',
+  TEAM_TEMPLATE_UPDATE:       'team:template-update',
+  TEAM_TEMPLATE_DELETE:       'team:template-delete',
+  TEAM_TEMPLATE_GET:          'team:template-get',
+  TEAM_TEMPLATE_GET_ALL:      'team:template-get-all',
+  TEAM_INSTANCE_CREATE:       'team:instance-create',
+  TEAM_INSTANCE_START:        'team:instance-start',
+  TEAM_INSTANCE_STOP:         'team:instance-stop',
+  TEAM_INSTANCE_PAUSE:        'team:instance-pause',
+  TEAM_INSTANCE_DELETE:       'team:instance-delete',
+  TEAM_INSTANCE_GET:          'team:instance-get',
+  TEAM_INSTANCE_GET_ALL:      'team:instance-get-all',
+  TEAM_MEMBER_UPDATE:         'team:member-update',
+  TEAM_SEND_MESSAGE:          'team:send-message',
+  TEAM_GET_MESSAGES:          'team:get-messages',
+  // Push events (主进程 → 渲染进程)
+  TEAM_STATUS_CHANGE:         'team:status-change',
+  TEAM_MEMBER_STATUS_CHANGE:  'team:member-status-change',
+  TEAM_MESSAGE:               'team:message',
 } as const
 
 // ---- 看板列 ----

@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { decideMessageInputEnter, normalizeImeStateOnNonEnterKey, type ImeEnterState } from '../src/renderer/components/conversation/messageInputEnterPolicy'
+import { decideMessageInputEnter, normalizeImeStateOnNonEnterKey, type ImeEnterState } from '../src/renderer/components/conversation/messageInputEnterPolicy.ts'
 
 test('Enter in non-IME state should send', () => {
   const decision = decideMessageInputEnter({

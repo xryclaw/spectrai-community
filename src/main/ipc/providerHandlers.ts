@@ -2,13 +2,26 @@
  * Provider, Directory, Usage, Search, Summary, NVM IPC 处理器
  */
 import { ipcMain } from 'electron'
+import { execFile } from 'child_process'
 import * as fs from 'fs'
 import * as path from 'path'
+import { promisify } from 'util'
 import { IPC } from '../../shared/constants'
 import { BUILTIN_PROVIDERS } from '../../shared/types'
 import { listInstalledNodeVersions } from '../node/NodeVersionResolver'
 import type { IpcDependencies } from './index'
+import { failInternalResult, failResult, IPC_ERROR_CODES } from './errorResult'
 
+const execFileAsync = promisify(execFile)
+
+async function pathExists(targetPath: string): Promise<boolean> {
+  try {
+    await fs.promises.access(targetPath)
+    return true
+  } catch {
+    return false
+  }
+}
 
 export function registerProviderHandlers(deps: IpcDependencies): void {
   const { database } = deps
@@ -39,7 +52,7 @@ export function registerProviderHandlers(deps: IpcDependencies): void {
       return { success: true, provider: created }
     } catch (error: any) {
       console.error('[IPC] PROVIDER_CREATE error:', error)
-      return { success: false, error: error.message }
+      return failInternalResult(error)
     }
   })
 
@@ -49,7 +62,7 @@ export function registerProviderHandlers(deps: IpcDependencies): void {
       return { success: true }
     } catch (error: any) {
       console.error('[IPC] PROVIDER_UPDATE error:', error)
-      return { success: false, error: error.message }
+      return failInternalResult(error)
     }
   })
 
@@ -57,12 +70,12 @@ export function registerProviderHandlers(deps: IpcDependencies): void {
     try {
       const deleted = database.deleteProvider(id)
       if (!deleted) {
-        return { success: false, error: '无法删除内置 Provider' }
+        return failResult(IPC_ERROR_CODES.INVALID_ARGUMENT, '无法删除内置 Provider')
       }
       return { success: true }
     } catch (error: any) {
       console.error('[IPC] PROVIDER_DELETE error:', error)
-      return { success: false, error: error.message }
+      return failInternalResult(error)
     }
   })
 
@@ -74,7 +87,7 @@ export function registerProviderHandlers(deps: IpcDependencies): void {
       return { success: true }
     } catch (error: any) {
       console.error('[IPC] PROVIDER_REORDER error:', error)
-      return { success: false, error: error.message }
+      return failInternalResult(error)
     }
   })
 
@@ -87,12 +100,12 @@ export function registerProviderHandlers(deps: IpcDependencies): void {
     }
 
     if (path.isAbsolute(normalized)) {
-      if (!fs.existsSync(normalized)) {
+      if (!await pathExists(normalized)) {
         return { found: false, path: normalized, reason: '路径不存在' }
       }
       try {
         if (process.platform !== 'win32') {
-          fs.accessSync(normalized, fs.constants.X_OK)
+          await fs.promises.access(normalized, fs.constants.X_OK)
         }
         return { found: true, path: normalized }
       } catch {
@@ -101,12 +114,11 @@ export function registerProviderHandlers(deps: IpcDependencies): void {
     }
 
     try {
-      const { execFileSync } = await import('child_process')
       const isWindows = process.platform === 'win32'
       // Windows 用 where，Unix/Mac 用 which
       const checker = isWindows ? 'where' : 'which'
-      const output = execFileSync(checker, [normalized], { encoding: 'utf8', timeout: 4000 }).trim()
-      const firstLine = output.split('\n')[0].trim()
+      const { stdout } = await execFileAsync(checker, [normalized], { encoding: 'utf8', timeout: 4000 })
+      const firstLine = String(stdout).trim().split('\n')[0].trim()
       return { found: true, path: firstLine }
     } catch {
       return { found: false, path: null, reason: '命令未在 PATH 中找到' }
@@ -122,15 +134,12 @@ export function registerProviderHandlers(deps: IpcDependencies): void {
    * 返回 { found, path, error? }
    */
   ipcMain.handle(IPC.PROVIDER_TEST_EXECUTABLE, async (_event, executablePath?: string) => {
-    const { execSync } = await import('child_process')
-    const fs = await import('fs')
-    const path = await import('path')
     const isWindows = process.platform === 'win32'
 
     // 模式 1：验证用户指定路径
     if (executablePath?.trim()) {
       const p = executablePath.trim()
-      if (fs.existsSync(p)) {
+      if (await pathExists(p)) {
         return { found: true, path: p }
       }
       return { found: false, path: null, error: `文件不存在：${p}` }
@@ -153,15 +162,15 @@ export function registerProviderHandlers(deps: IpcDependencies): void {
 
     // 2a. where/which claude → 解析 wrapper → cli.js
     try {
-      const cmd = isWindows ? 'where claude' : 'which claude'
-      const claudePath = execSync(cmd, { encoding: 'utf8', timeout: 5000, env })
-        .trim().split(/\r?\n/)[0]
+      const checker = isWindows ? 'where' : 'which'
+      const { stdout } = await execFileAsync(checker, ['claude'], { encoding: 'utf8', timeout: 5000, env })
+      const claudePath = String(stdout).trim().split(/\r?\n/)[0]
       if (claudePath) {
         try {
-          const wrapperContent = fs.readFileSync(claudePath, 'utf-8')
+          const wrapperContent = await fs.promises.readFile(claudePath, 'utf-8')
           if (wrapperContent.match(/node_modules[\\/]@anthropic-ai[\\/]claude-code[\\/]cli\.js/)) {
             const cliJs = path.resolve(path.dirname(claudePath), 'node_modules', CLI_SUBPATH)
-            if (fs.existsSync(cliJs)) return { found: true, path: cliJs }
+            if (await pathExists(cliJs)) return { found: true, path: cliJs }
           }
         } catch { /* ignore */ }
         // wrapper 不含 cli.js 但 claude 命令存在，也算可用
@@ -181,14 +190,15 @@ export function registerProviderHandlers(deps: IpcDependencies): void {
         ]
 
     for (const p of commonPaths) {
-      if (p && fs.existsSync(p)) return { found: true, path: p }
+      if (p && await pathExists(p)) return { found: true, path: p }
     }
 
     // 2c. npm root -g
     try {
-      const npmRoot = execSync('npm root -g', { encoding: 'utf8', timeout: 5000, env }).trim()
+      const { stdout } = await execFileAsync('npm', ['root', '-g'], { encoding: 'utf8', timeout: 5000, env })
+      const npmRoot = String(stdout).trim()
       const globalCliJs = path.join(npmRoot, CLI_SUBPATH)
-      if (fs.existsSync(globalCliJs)) return { found: true, path: globalCliJs }
+      if (await pathExists(globalCliJs)) return { found: true, path: globalCliJs }
     } catch { /* ignore */ }
 
     return { found: false, path: null, error: '未找到 Claude Code CLI，请安装后重试或手动指定路径' }
@@ -210,7 +220,7 @@ export function registerProviderHandlers(deps: IpcDependencies): void {
       database.toggleDirectoryPin(dirPath)
       return { success: true }
     } catch (error: any) {
-      return { success: false, error: error.message }
+      return failInternalResult(error)
     }
   })
 
@@ -219,7 +229,7 @@ export function registerProviderHandlers(deps: IpcDependencies): void {
       database.removeDirectory(dirPath)
       return { success: true }
     } catch (error: any) {
-      return { success: false, error: error.message }
+      return failInternalResult(error)
     }
   })
 

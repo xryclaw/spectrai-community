@@ -141,7 +141,7 @@ export class ClaudeJsonlReader extends BaseOutputReader {
     watch.lineBuffer = ''
 
     console.log(`[ClaudeJsonlReader] 绑定对话 ${conversationId} → ${newFilePath}`)
-    this.startFileReading(watch)
+    void this.startFileReading(watch)
   }
 
   stopWatching(sessionId: string): void {
@@ -173,7 +173,7 @@ export class ClaudeJsonlReader extends BaseOutputReader {
    */
   private startDirectoryScan(watch: SessionWatch): void {
     // 立即扫一次
-    this.scanForNewFile(watch)
+    void this.scanForNewFile(watch)
 
     watch.scanTimer = setInterval(() => {
       if (watch.filePath) {
@@ -181,33 +181,44 @@ export class ClaudeJsonlReader extends BaseOutputReader {
         this.stopDirectoryScan(watch)
         return
       }
-      this.scanForNewFile(watch)
+      void this.scanForNewFile(watch)
     }, this.SCAN_INTERVAL)
   }
 
-  private scanForNewFile(watch: SessionWatch): void {
-    if (!fs.existsSync(watch.projectDir)) return
+  private async pathExists(targetPath: string): Promise<boolean> {
+    try {
+      await fs.promises.access(targetPath)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  private async scanForNewFile(watch: SessionWatch): Promise<void> {
+    if (!await this.pathExists(watch.projectDir)) return
 
     try {
-      const files = fs.readdirSync(watch.projectDir)
+      const files = (await fs.promises.readdir(watch.projectDir))
         .filter(f => f.endsWith('.jsonl'))
         // ★ 跳过已被其他 session 占用的 conversationId
         .filter(f => !this.claimedConversationIds.has(f.replace('.jsonl', '')))
-        .map(f => {
+        .map(async (f) => {
           const fullPath = path.join(watch.projectDir, f)
           try {
-            return { name: f, fullPath, mtime: fs.statSync(fullPath).mtimeMs }
+            const stat = await fs.promises.stat(fullPath)
+            return { name: f, fullPath, mtime: stat.mtimeMs }
           } catch {
             return null
           }
         })
+      const resolved = (await Promise.all(files))
         .filter((f): f is NonNullable<typeof f> => f !== null)
         // 只关注会话启动后有变动的文件（5 秒容差）
         .filter(f => f.mtime > watch.startTime - 5000)
         .sort((a, b) => b.mtime - a.mtime)
 
-      if (files.length > 0) {
-        const target = files[0]
+      if (resolved.length > 0) {
+        const target = resolved[0]
         const conversationId = target.name.replace('.jsonl', '')
 
         // 原子占用：双重检查防止并发竞争
@@ -225,7 +236,7 @@ export class ClaudeJsonlReader extends BaseOutputReader {
           conversationId
         })
 
-        this.startFileReading(watch)
+        void this.startFileReading(watch)
       }
     } catch {
       // 目录读取失败，等下次重试
@@ -241,17 +252,17 @@ export class ClaudeJsonlReader extends BaseOutputReader {
 
   // ---- 文件读取 ----
 
-  private startFileReading(watch: SessionWatch): void {
+  private async startFileReading(watch: SessionWatch): Promise<void> {
     if (!watch.filePath) return
 
-    if (!fs.existsSync(watch.filePath)) {
+    if (!await this.pathExists(watch.filePath)) {
       // 文件还没创建，继续轮询等待
       this.startPoll(watch)
       return
     }
 
     // 读取全部已有内容（追赶历史）
-    this.readNewContent(watch)
+    await this.readNewContent(watch)
     // 启动文件变更监听
     this.startFileWatcher(watch)
   }
@@ -259,22 +270,22 @@ export class ClaudeJsonlReader extends BaseOutputReader {
   /**
    * 增量读取文件新内容
    */
-  private readNewContent(watch: SessionWatch): void {
+  private async readNewContent(watch: SessionWatch): Promise<void> {
     if (!watch.filePath) return
 
     try {
-      const stat = fs.statSync(watch.filePath)
+      const stat = await fs.promises.stat(watch.filePath)
       if (stat.size <= watch.fileOffset) return
 
-      const fd = fs.openSync(watch.filePath, 'r')
+      const fileHandle = await fs.promises.open(watch.filePath, 'r')
       try {
         const size = stat.size - watch.fileOffset
         const buffer = Buffer.alloc(size)
-        fs.readSync(fd, buffer, 0, size, watch.fileOffset)
+        await fileHandle.read(buffer, 0, size, watch.fileOffset)
         watch.fileOffset = stat.size
         this.processText(watch, buffer.toString('utf-8'))
       } finally {
-        fs.closeSync(fd)
+        await fileHandle.close()
       }
     } catch {
       // 文件正在被写入，忽略
@@ -307,7 +318,7 @@ export class ClaudeJsonlReader extends BaseOutputReader {
     try {
       watch.watcher = fs.watch(watch.filePath!, (eventType) => {
         if (eventType === 'change') {
-          this.readNewContent(watch)
+          void this.readNewContent(watch)
         }
       })
       watch.watcher.on('error', () => {
@@ -321,10 +332,10 @@ export class ClaudeJsonlReader extends BaseOutputReader {
 
   private startPoll(watch: SessionWatch): void {
     if (watch.pollTimer) return
-    watch.pollTimer = setInterval(() => {
+    watch.pollTimer = setInterval(async () => {
       if (!watch.filePath) return
-      if (!fs.existsSync(watch.filePath)) return
-      this.readNewContent(watch)
+      if (!await this.pathExists(watch.filePath)) return
+      await this.readNewContent(watch)
       // 文件出现了且还没有 watcher，尝试建立
       if (!watch.watcher) {
         this.stopPoll(watch)

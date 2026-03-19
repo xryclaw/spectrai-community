@@ -5,7 +5,7 @@
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { Plus, Terminal, X, FolderOpen, RotateCcw, Play, Square, Search, Star, ChevronDown, ChevronUp, Settings2, Cpu, Pencil, Sparkles, Layers, Trash2 } from 'lucide-react'
+import { Plus, Terminal, X, FolderOpen, Star, ChevronDown, ChevronUp, Settings2, Cpu, Sparkles, Layers } from 'lucide-react'
 import { useUIStore } from '../../stores/uiStore'
 import { useSessionStore } from '../../stores/sessionStore'
 import { useGitStore } from '../../stores/gitStore'
@@ -15,11 +15,13 @@ import UnifiedSettingsModal from '../settings/UnifiedSettingsModal'
 import DashboardSidebarView from '../sidebar/DashboardSidebarView'
 import McpSidebarView from '../sidebar/McpSidebarView'
 import SkillsSidebarView from '../sidebar/SkillsSidebarView'
+import { TeamPanel } from '../team/TeamPanel'
+import { TeamMembersSidebar } from '../team/TeamMembersSidebar'
+import { useTeamStore } from '../../stores/teamStore'
 import TimelinePanel from '../panels/TimelinePanel'
 import StatsPanel from '../panels/StatsPanel'
 import { FileManagerPanel } from '../file-manager'
 import GitPanel from '../panels/GitPanel'
-import { toPlatformShortcutLabel } from '../../utils/shortcut'
 
 // ── 从 sidebar/ 子模块导入 ──
 import {
@@ -35,6 +37,11 @@ import {
 import { TimeGroupCard, DirGroupCard } from './sidebar/SessionGroupCards'
 import { SessionPickerModal } from './sidebar/SessionPickerModal'
 import { GroupByToggle } from './sidebar/GroupByToggle'
+import { SessionsTopBar } from './sidebar/SessionsTopBar'
+import { SessionsFooter } from './sidebar/SessionsFooter'
+import { SessionContextMenu } from './sidebar/SessionContextMenu'
+import { DirectoryContextMenu } from './sidebar/DirectoryContextMenu'
+import { DeleteSessionDialog } from './sidebar/DeleteSessionDialog'
 // ─────────────────────────────────────────────────────────
 // 会话列表内容
 // ─────────────────────────────────────────────────────────
@@ -155,7 +162,9 @@ export function SessionsContent() {
   const [sessionName, setSessionName] = useState('')
   const [sessionCwd, setSessionCwd] = useState('')
   const [sessionPrompt, setSessionPrompt] = useState('')
-  const [supervisorMode, setSupervisorMode] = useState(false)
+  const [sessionModeType, setSessionModeType] = useState<'normal' | 'supervisor' | 'autonomous'>('normal')
+  const [autonomousGoal, setAutonomousGoal] = useState('')
+  const [allowedProviderIds, setAllowedProviderIds] = useState<string[]>([])
   const [autoAccept, setAutoAccept] = useState(true)
   const [createSessionError, setCreateSessionError] = useState<string | null>(null)
   const [isCreatingSession, setIsCreatingSession] = useState(false)
@@ -222,7 +231,7 @@ export function SessionsContent() {
     setSessionName(`会话 ${new Date().toLocaleTimeString()}`)
     setSessionPrompt('')
     setSelectedProviderId('')
-    setSupervisorMode(false)
+    setSessionModeType('normal')
     setSessionMode('directory')
     setSelectedWorkspaceId('')
     setShowAllDirs(false)
@@ -287,8 +296,11 @@ export function SessionsContent() {
         autoAccept,
         initialPrompt: sessionPrompt.trim() || undefined,
         providerId,
-        enableAgent: supervisorMode,
-        supervisorMode,
+        enableAgent: sessionModeType !== 'normal',
+        supervisorMode: sessionModeType === 'supervisor',
+        autonomousMode: sessionModeType === 'autonomous',
+        autonomousGoal: sessionModeType === 'autonomous' ? autonomousGoal.trim() : undefined,
+        allowedProviderIds: sessionModeType === 'autonomous' ? allowedProviderIds : undefined,
       })
       setShowNewSessionDialog(false)
     } catch (error: any) {
@@ -344,29 +356,10 @@ export function SessionsContent() {
   return (
     <div className="flex flex-col h-full bg-bg-secondary border-r border-border">
 
-      {/* ── 顶部标题栏（可拖拽） ── */}
-      <div className="flex items-center justify-between p-4 border-b border-border" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
-        <div className="flex items-center gap-2">
-          <Terminal className="w-5 h-5 text-accent-blue" />
-          <h1 className="text-lg font-semibold text-text-primary">SpectrAI</h1>
-        </div>
-        <div className="flex items-center gap-1" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
-          <button
-            onClick={toggleSearchPanel}
-            className="p-2 rounded hover:bg-bg-hover btn-transition text-text-secondary hover:text-text-primary"
-            title={`搜索日志 (${toPlatformShortcutLabel('Ctrl+F')})`}
-          >
-            <Search className="w-4 h-4" />
-          </button>
-          <button
-            onClick={() => openNewSessionDialog()}
-            className="p-2 rounded hover:bg-bg-hover btn-transition text-text-secondary hover:text-text-primary"
-            title="新建会话"
-          >
-            <Plus className="w-5 h-5" />
-          </button>
-        </div>
-      </div>
+      <SessionsTopBar
+        onToggleSearch={toggleSearchPanel}
+        onOpenNewSession={() => openNewSessionDialog()}
+      />
 
       {/* ── 会话列表 ── */}
       <div ref={sessionListScrollRef} className="flex-1 overflow-y-auto p-3 space-y-2">
@@ -433,108 +426,58 @@ export function SessionsContent() {
 
       </div>
 
-      {/* ── 底部快速操作 ── */}
-      <div className="p-4 border-t border-border">
-        <button
-          onClick={() => openNewSessionDialog()}
-          className="w-full py-2 px-4 bg-accent-blue text-white rounded hover:bg-opacity-90 btn-transition flex items-center justify-center gap-2"
-        >
-          <Terminal className="w-4 h-4" />
-          <span>新建会话</span>
-        </button>
-      </div>
+      <SessionsFooter onOpenNewSession={() => openNewSessionDialog()} />
 
       {/* ── 右键上下文菜单 ── */}
       {contextMenu && (
-        <div
-          ref={menuRef}
-          className="fixed z-[90] bg-bg-secondary border border-border rounded-lg shadow-2xl py-1 min-w-[140px]"
-          style={{ left: contextMenu.x, top: contextMenu.y }}
-        >
-          <button
-            onClick={() => { setRenamingSessionId(contextMenu.sessionId); setContextMenu(null) }}
-            className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-text-primary hover:bg-bg-hover btn-transition text-left"
-          >
-            <Pencil className="w-3.5 h-3.5 text-accent-blue" />
-            重命名
-          </button>
-          <button
-            disabled={aiRenamingSessionId === contextMenu.sessionId}
-            onClick={async () => {
-              const sid = contextMenu.sessionId
-              setContextMenu(null)
-              setAiRenamingSessionId(sid)
-              const result = await aiRenameSession(sid)
-              setAiRenamingSessionId(null)
-              if (!result.success) setAiRenameError(result.error || 'AI 重命名失败')
-            }}
-            className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-text-primary hover:bg-bg-hover btn-transition text-left disabled:opacity-50"
-          >
-            <Sparkles className={`w-3.5 h-3.5 text-accent-purple ${aiRenamingSessionId === contextMenu.sessionId ? 'animate-pulse' : ''}`} />
-            {aiRenamingSessionId === contextMenu.sessionId ? 'AI 命名中...' : 'AI 重命名'}
-          </button>
-          {(contextMenu.status === 'completed' || contextMenu.status === 'terminated') && (
-            <button
-              onClick={() => { resumeSession(contextMenu.sessionId); setContextMenu(null) }}
-              className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-text-primary hover:bg-bg-hover btn-transition text-left"
-            >
-              <Play className="w-3.5 h-3.5 text-accent-green" />
-              继续任务
-            </button>
-          )}
-          {contextMenu.status === 'interrupted' && (
-            <button
-              onClick={() => { resumeSession(contextMenu.sessionId); setContextMenu(null) }}
-              className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-text-primary hover:bg-bg-hover btn-transition text-left"
-            >
-              <RotateCcw className="w-3.5 h-3.5 text-accent-blue" />
-              恢复会话
-            </button>
-          )}
-          {(contextMenu.status === 'running' || contextMenu.status === 'idle' || contextMenu.status === 'waiting_input' || contextMenu.status === 'starting') && (
-            <button
-              onClick={() => { terminateSession(contextMenu.sessionId); setContextMenu(null) }}
-              className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-accent-red hover:bg-bg-hover btn-transition text-left"
-            >
-              <Square className="w-3.5 h-3.5" />
-              终止会话
-            </button>
-          )}
-          <div className="my-1 border-t border-border" />
-          <button
-            onClick={() => {
-              const sid = contextMenu.sessionId
-              const sName = sessions.find(s => s.id === sid)?.name || sid
-              setContextMenu(null)
-              setDeleteConfirm({ sessionId: sid, sessionName: sName })
-            }}
-            className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-accent-red hover:bg-bg-hover btn-transition text-left"
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-            删除任务
-          </button>
-        </div>
+        <SessionContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          status={contextMenu.status}
+          isAiRenaming={aiRenamingSessionId === contextMenu.sessionId}
+          menuRef={menuRef}
+          onRename={() => {
+            setRenamingSessionId(contextMenu.sessionId)
+            setContextMenu(null)
+          }}
+          onAiRename={async () => {
+            const sid = contextMenu.sessionId
+            setContextMenu(null)
+            setAiRenamingSessionId(sid)
+            const result = await aiRenameSession(sid)
+            setAiRenamingSessionId(null)
+            if (!result.success) setAiRenameError(result.error || 'AI 重命名失败')
+          }}
+          onResume={() => {
+            resumeSession(contextMenu.sessionId)
+            setContextMenu(null)
+          }}
+          onTerminate={() => {
+            terminateSession(contextMenu.sessionId)
+            setContextMenu(null)
+          }}
+          onDelete={() => {
+            const sid = contextMenu.sessionId
+            const sName = sessions.find(s => s.id === sid)?.name || sid
+            setContextMenu(null)
+            setDeleteConfirm({ sessionId: sid, sessionName: sName })
+          }}
+        />
       )}
 
       {/* ── 目录右键菜单 ── */}
       {dirContextMenu && (
-        <div
-          ref={dirMenuRef}
-          className="fixed z-[90] bg-bg-secondary border border-border rounded-lg shadow-2xl py-1 min-w-[160px]"
-          style={{ left: dirContextMenu.x, top: dirContextMenu.y }}
-        >
-          <button
-            onClick={() => {
-              const dir = dirContextMenu.workDir
-              setDirContextMenu(null)
-              openNewSessionDialog(dir || undefined)
-            }}
-            className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-text-primary hover:bg-bg-hover btn-transition text-left"
-          >
-            <Plus className="w-3.5 h-3.5 text-accent-green" />
-            {dirContextMenu.workDir ? '在此新建对话' : '新建对话'}
-          </button>
-        </div>
+        <DirectoryContextMenu
+          x={dirContextMenu.x}
+          y={dirContextMenu.y}
+          workDir={dirContextMenu.workDir}
+          menuRef={dirMenuRef}
+          onCreate={() => {
+            const dir = dirContextMenu.workDir
+            setDirContextMenu(null)
+            openNewSessionDialog(dir || undefined)
+          }}
+        />
       )}
 
       {/* ── 会话分组选择器弹框 ── */}
@@ -549,52 +492,22 @@ export function SessionsContent() {
 
       {/* ── 删除会话确认弹框 ── */}
       {deleteConfirm && (
-        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="bg-bg-secondary rounded-xl shadow-2xl border border-border w-full max-w-sm p-5">
-            <div className="flex items-start gap-3 mb-4">
-              <div className="w-9 h-9 rounded-full bg-accent-red/15 flex items-center justify-center flex-shrink-0">
-                <Trash2 className="w-4.5 h-4.5 text-accent-red" />
-              </div>
-              <div>
-                <h3 className="text-sm font-semibold text-text-primary mb-1">删除任务</h3>
-                <p className="text-xs text-text-secondary leading-relaxed">
-                  确定要永久删除 <span className="font-medium text-text-primary">"{deleteConfirm.sessionName}"</span> 吗？<br />
-                  此操作将删除会话及其所有历史记录，且无法撤销。
-                </p>
-              </div>
-            </div>
-            <div className="flex gap-2 justify-end">
-              <button
-                onClick={() => setDeleteConfirm(null)}
-                disabled={isDeleting}
-                className="px-3 py-1.5 text-xs text-text-secondary hover:text-text-primary bg-bg-hover hover:bg-bg-tertiary rounded btn-transition disabled:opacity-50"
-              >
-                取消
-              </button>
-              <button
-                onClick={async () => {
-                  setIsDeleting(true)
-                  try {
-                    await deleteSession(deleteConfirm.sessionId)
-                    setDeleteConfirm(null)
-                  } catch (err) {
-                    console.error('Delete session failed:', err)
-                  } finally {
-                    setIsDeleting(false)
-                  }
-                }}
-                disabled={isDeleting}
-                className="px-3 py-1.5 text-xs text-white bg-accent-red hover:bg-accent-red/80 rounded btn-transition disabled:opacity-50 flex items-center gap-1.5"
-              >
-                {isDeleting ? (
-                  <><span className="w-3 h-3 border border-white/40 border-t-white rounded-full animate-spin" />删除中...</>
-                ) : (
-                  <><Trash2 className="w-3 h-3" />确认删除</>
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
+        <DeleteSessionDialog
+          sessionName={deleteConfirm.sessionName}
+          isDeleting={isDeleting}
+          onCancel={() => setDeleteConfirm(null)}
+          onConfirm={async () => {
+            setIsDeleting(true)
+            try {
+              await deleteSession(deleteConfirm.sessionId)
+              setDeleteConfirm(null)
+            } catch (err) {
+              console.error('Delete session failed:', err)
+            } finally {
+              setIsDeleting(false)
+            }
+          }}
+        />
       )}
 
       {/* ── Provider 管理弹窗 ── */}
@@ -898,12 +811,12 @@ export function SessionsContent() {
               </div>
               <div>
                 <label className="block text-sm font-medium text-text-secondary mb-1.5">会话模式</label>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-3 gap-2">
                   <button
                     type="button"
-                    onClick={() => setSupervisorMode(false)}
+                    onClick={() => setSessionModeType('normal')}
                     className={`px-3 py-2 rounded text-xs border btn-transition ${
-                      !supervisorMode
+                      sessionModeType === 'normal'
                         ? 'bg-accent-blue/15 border-accent-blue/40 text-accent-blue'
                         : 'bg-bg-hover hover:bg-bg-tertiary border-border text-text-secondary'
                     }`}
@@ -912,19 +825,59 @@ export function SessionsContent() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => setSupervisorMode(true)}
+                    onClick={() => setSessionModeType('supervisor')}
                     className={`px-3 py-2 rounded text-xs border btn-transition ${
-                      supervisorMode
+                      sessionModeType === 'supervisor'
                         ? 'bg-accent-green/15 border-accent-green/40 text-accent-green'
                         : 'bg-bg-hover hover:bg-bg-tertiary border-border text-text-secondary'
                     }`}
                   >
                     Supervisor
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => setSessionModeType('autonomous')}
+                    className={`px-3 py-2 rounded text-xs border btn-transition ${
+                      sessionModeType === 'autonomous'
+                        ? 'bg-accent-purple/15 border-accent-purple/40 text-accent-purple'
+                        : 'bg-bg-hover hover:bg-bg-tertiary border-border text-text-secondary'
+                    }`}
+                  >
+                    自主任务
+                  </button>
                 </div>
                 <p className="text-[10px] text-text-muted mt-1">
-                  {supervisorMode ? 'AI 可自动拆解任务并分派给子会话执行' : '标准单会话模式'}
+                  {sessionModeType === 'supervisor' ? 'AI 可自动拆解任务并分派给子会话执行' : sessionModeType === 'autonomous' ? '端到端自治：AI 规划 → 用户审批 → 团队执行' : '标准单会话模式'}
                 </p>
+                {sessionModeType === 'autonomous' && (
+                  <div className="mt-2 space-y-2">
+                    <textarea
+                      value={autonomousGoal}
+                      onChange={e => setAutonomousGoal(e.target.value)}
+                      placeholder="描述你的任务目标..."
+                      rows={3}
+                      className="w-full px-2.5 py-1.5 text-xs bg-bg-input border border-border rounded resize-none focus:outline-none focus:border-accent-purple/60"
+                    />
+                    {providers.length > 0 && (
+                      <div className="space-y-1">
+                        <p className="text-[10px] text-text-muted">允许使用的 Provider（可多选）</p>
+                        {providers.map(p => (
+                          <label key={p.id} className="flex items-center gap-1.5 text-xs text-text-secondary cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={allowedProviderIds.includes(p.id)}
+                              onChange={e => setAllowedProviderIds(prev =>
+                                e.target.checked ? [...prev, p.id] : prev.filter(id => id !== p.id)
+                              )}
+                              className="accent-accent-purple"
+                            />
+                            {p.name}
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
               {createSessionError && (
                 <div className="text-xs text-accent-red bg-accent-red/10 border border-accent-red/30 rounded px-2.5 py-2">
@@ -996,6 +949,45 @@ export function SessionsContent() {
  * 支持所有 PanelId，包括从右侧拖过来的面板（timeline / stats）
  * @author weibin
  */
+/**
+ * 会话面板包装器 — 当选中的 session 属于团队时，显示团队成员侧边栏
+ */
+function SessionsPanelWrapper() {
+  const selectedSessionId = useSessionStore((s) => s.selectedSessionId)
+  const getTeamForSession = useTeamStore((s) => s.getTeamForSession)
+  const fetchInstances = useTeamStore((s) => s.fetchInstances)
+  const initListeners = useTeamStore((s) => s.initListeners)
+  const cleanupListeners = useTeamStore((s) => s.cleanupListeners)
+  const [teamInited, setTeamInited] = useState(false)
+
+  // 初始化团队数据（只执行一次）
+  useEffect(() => {
+    fetchInstances().then(() => setTeamInited(true))
+    initListeners()
+    return () => cleanupListeners()
+  }, [])
+
+  const teamInstance = teamInited && selectedSessionId
+    ? getTeamForSession(selectedSessionId)
+    : null
+
+  if (teamInstance) {
+    return (
+      <TeamMembersSidebar
+        instance={teamInstance}
+        onBack={() => {
+          // 清除选中的成员，回到 session 列表
+          useTeamStore.getState().selectMember(null)
+          // 取消选中当前 session，回到列表视图
+          useSessionStore.getState().selectSession('')
+        }}
+      />
+    )
+  }
+
+  return <SessionsContent />
+}
+
 export default function Sidebar() {
   const activePanelLeft = useUIStore((s) => s.activePanelLeft)
 
@@ -1014,8 +1006,10 @@ export default function Sidebar() {
       return <McpSidebarView />
     case 'skills':
       return <SkillsSidebarView />
+    case 'teams':
+      return <TeamPanel />
     case 'sessions':
     default:
-      return <SessionsContent />
+      return <SessionsPanelWrapper />
   }
 }

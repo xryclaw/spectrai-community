@@ -23,6 +23,9 @@ import { mapToolToActivityType, extractToolDetail } from './toolMapping'
 import { logger } from '../logger'
 import type { DatabaseManager } from '../storage/Database'
 import { prependNodeVersionToEnvPath } from '../node/NodeVersionResolver'
+import { StreamParser } from './claude/StreamParser'
+import { withRetry } from './claude/RetryStrategy'
+import { formatSpectralError, toSpectralError } from '../errors/SpectralError'
 
 // ---- V1 Query 类型（运行时从 SDK 动态加载） ----
 
@@ -123,6 +126,10 @@ export class ClaudeSdkAdapter extends BaseProviderAdapter {
     resolve: (result: any) => void
     toolInput: Record<string, unknown>
   }> = new Map()
+  /** 流消息解析子模块 */
+  private readonly streamParser = new StreamParser()
+  /** 会话级定时器（用于统一清理，避免泄漏） */
+  private readonly sessionTimers: Map<string, Set<ReturnType<typeof setTimeout>>> = new Map()
 
   /**
    * 注入数据库引用（在 Adapter 注册后由 main/index.ts 调用）
@@ -1050,6 +1057,7 @@ export class ClaudeSdkAdapter extends BaseProviderAdapter {
     overrides?: { providerSessionId?: string; initialStatus?: AdapterSession['status'] },
   ): Promise<{ session: AdapterSession; inputStream: AsyncIterableQueue<any>; sdkQuery: SDKQuery }> {
     const sdk = await this.loadSdk()
+    this.clearSessionTimers(sessionId)
 
     const session: AdapterSession = {
       sessionId,
@@ -1298,6 +1306,7 @@ export class ClaudeSdkAdapter extends BaseProviderAdapter {
         this.inputStreams.delete(sessionId)
       }
       this.abortControllers.delete(sessionId)
+      this.clearSessionTimers(sessionId)
 
       // 异步重新 resume（不 await，避免阻塞）
       this.resumeSession(sessionId, providerSessionId, config).catch(resumeErr => {
@@ -1312,6 +1321,8 @@ export class ClaudeSdkAdapter extends BaseProviderAdapter {
   }
 
   async terminateSession(sessionId: string): Promise<void> {
+    this.clearSessionTimers(sessionId)
+
     const sdkQuery = this.sdkQueries.get(sessionId)
     const session = this.sessions.get(sessionId)
     const abortController = this.abortControllers.get(sessionId)
@@ -1408,6 +1419,9 @@ export class ClaudeSdkAdapter extends BaseProviderAdapter {
     this.pendingPermissions.clear()
     this.pendingQuestions.clear()
     this.pendingPlanApprovals.clear()
+    for (const [sessionId] of this.sessionTimers) {
+      this.clearSessionTimers(sessionId)
+    }
   }
 
   // ---- 内部方法 ----
@@ -1544,6 +1558,7 @@ export class ClaudeSdkAdapter extends BaseProviderAdapter {
       }
 
     } catch (err: any) {
+      const spectralError = toSpectralError(err, 'Claude stream failed')
       // ★ Fix2: 扩大 abort 错误检测范围
       // SDK 可能抛出 APIUserAbortError（name="Error"）或 DOMException（name="AbortError"）
       // 同时兼容所有 abort 相关的异常，避免因 name 不匹配而进入错误分支
@@ -1563,7 +1578,7 @@ export class ClaudeSdkAdapter extends BaseProviderAdapter {
         }
         return
       }
-      logger.error(`[ClaudeSdkAdapter] Stream error for ${sessionId}:`, err)
+      logger.error(`[ClaudeSdkAdapter] Stream error for ${sessionId}: ${formatSpectralError(spectralError)}`, err)
 
       // ★ 针对进程退出错误，优先用 stderr 内容生成有意义的错误提示
       const isProcessExit = /process exited with code/i.test(err.message)
@@ -1625,6 +1640,7 @@ export class ClaudeSdkAdapter extends BaseProviderAdapter {
       })
       session.status = 'error'
       this.emit('status-change', sessionId, 'error')
+      this.clearSessionTimers(sessionId)
 
       // ★ 关闭 inputStream，阻止 SDK 内部继续向已死亡进程写入
       // 不关闭的话，用户在错误状态下发消息会触发 SDK 内部 ProcessTransport 报错，
@@ -1634,6 +1650,8 @@ export class ClaudeSdkAdapter extends BaseProviderAdapter {
         try { deadInputStream.close() } catch { /* ignore */ }
         this.inputStreams.delete(sessionId)
       }
+    } finally {
+      this.streamState.delete(sessionId)
     }
   }
 
@@ -1809,28 +1827,24 @@ export class ClaudeSdkAdapter extends BaseProviderAdapter {
     sessionId: string,
     msg: any,
   ): void {
-    const event = msg.event
-    if (!event) return
+    const { textDelta, thinkingDelta } = this.streamParser.parseStreamDelta(msg)
 
-    if (event.type === 'content_block_delta') {
-      const delta = event.delta
-      if (!delta) return
+    if (textDelta) {
+      this.emitEvent(sessionId, {
+        type: 'text_delta',
+        sessionId,
+        timestamp: new Date().toISOString(),
+        data: { text: textDelta },
+      })
+    }
 
-      if (delta.type === 'text_delta' && delta.text) {
-        this.emitEvent(sessionId, {
-          type: 'text_delta',
-          sessionId,
-          timestamp: new Date().toISOString(),
-          data: { text: delta.text },
-        })
-      } else if (delta.type === 'thinking_delta' && delta.thinking) {
-        this.emitEvent(sessionId, {
-          type: 'thinking',
-          sessionId,
-          timestamp: new Date().toISOString(),
-          data: { text: delta.thinking },
-        })
-      }
+    if (thinkingDelta) {
+      this.emitEvent(sessionId, {
+        type: 'thinking',
+        sessionId,
+        timestamp: new Date().toISOString(),
+        data: { text: thinkingDelta },
+      })
     }
   }
 
@@ -1842,76 +1856,88 @@ export class ClaudeSdkAdapter extends BaseProviderAdapter {
     thinking: string
     toolUses: Array<{ id: string; name: string; input: Record<string, unknown> }>
   } {
-    const content = msg.message?.content || []
-    let text = ''
-    let thinking = ''
-    const toolUses: Array<{ id: string; name: string; input: Record<string, unknown> }> = []
-
-    for (const block of content) {
-      switch (block.type) {
-        case 'text':
-          text += block.text || ''
-          break
-        case 'thinking':
-          thinking += block.thinking || ''
-          break
-        case 'tool_use':
-          toolUses.push({
-            id: block.id || uuidv4(),
-            name: block.name || 'unknown',
-            input: block.input || {},
-          })
-          break
-      }
+    try {
+      return this.streamParser.parseAssistantMessage(msg)
+    } catch (error) {
+      const normalized = toSpectralError(error, 'Failed to parse assistant message')
+      logger.warn(`[ClaudeSdkAdapter] ${formatSpectralError(normalized)}`)
+      return { text: '', thinking: '', toolUses: [] }
     }
-
-    return { text, thinking, toolUses }
   }
 
-  /**
-   * 发射标准化事件
-   */
+  private trackSessionTimer(sessionId: string, timer: ReturnType<typeof setTimeout>): void {
+    let timers = this.sessionTimers.get(sessionId)
+    if (!timers) {
+      timers = new Set()
+      this.sessionTimers.set(sessionId, timers)
+    }
+    timers.add(timer)
+  }
+
+  private untrackSessionTimer(sessionId: string, timer: ReturnType<typeof setTimeout>): void {
+    const timers = this.sessionTimers.get(sessionId)
+    if (!timers) return
+    timers.delete(timer)
+    if (timers.size === 0) this.sessionTimers.delete(sessionId)
+  }
+
+  private clearSessionTimers(sessionId: string): void {
+    const timers = this.sessionTimers.get(sessionId)
+    if (!timers) return
+    for (const timer of timers) clearTimeout(timer)
+    this.sessionTimers.delete(sessionId)
+  }
+
   /**
    * 主动获取 supportedCommands 并发射 session-init-data
    * 不依赖 system.init 消息（空会话未发送消息前不会收到 system.init）
    */
   private fetchAndEmitInitData(sessionId: string, sdkQuery: SDKQuery): void {
-    // 延迟 2 秒，等 CLI 进程完成初始化
-    setTimeout(() => {
-      sdkQuery.supportedCommands().then(commands => {
-        if (commands && commands.length > 0) {
-          logger.info(`[ClaudeSdkAdapter] Proactive supportedCommands for ${sessionId}: ${commands.length}, sample: ${JSON.stringify(commands.slice(0, 2))}`)
-          this.emit('session-init-data', sessionId, {
-            model: '',
-            tools: [],
-            mcpServers: [],
-            skills: commands,
-            plugins: [],
-          })
-        }
-      }).catch(err => {
-        // 首次可能失败（CLI 还没就绪），5 秒后重试一次
-        logger.debug(`[ClaudeSdkAdapter] supportedCommands() first attempt failed for ${sessionId}, retrying in 5s...`)
-        setTimeout(() => {
-          const q = this.sdkQueries.get(sessionId)
-          if (!q) return
-          q.supportedCommands().then(commands => {
-            if (commands && commands.length > 0) {
-              logger.info(`[ClaudeSdkAdapter] Retry supportedCommands for ${sessionId}: ${commands.length}`)
-              this.emit('session-init-data', sessionId, {
-                model: '',
-                tools: [],
-                mcpServers: [],
-                skills: commands,
-                plugins: [],
-              })
+    const bootstrapTimer = setTimeout(async () => {
+      this.untrackSessionTimer(sessionId, bootstrapTimer)
+
+      try {
+        const commands = await withRetry(
+          async (attempt) => {
+            const q = this.sdkQueries.get(sessionId) || sdkQuery
+            const result = await q.supportedCommands()
+            if (!result || result.length === 0) {
+              throw new Error('supportedCommands returned empty')
             }
-          }).catch(retryErr => {
-            logger.warn(`[ClaudeSdkAdapter] supportedCommands() retry failed for ${sessionId}:`, retryErr)
-          })
-        }, 5000)
-      })
+            if (attempt > 1) {
+              logger.info(`[ClaudeSdkAdapter] Retry supportedCommands for ${sessionId}: ${result.length}`)
+            }
+            return result
+          },
+          {
+            retries: 1,
+            delayMs: 5000,
+            shouldRetry: () => this.sdkQueries.has(sessionId),
+            onRetry: (error) => {
+              logger.debug(
+                `[ClaudeSdkAdapter] supportedCommands() first attempt failed for ${sessionId}, retrying in 5s...`,
+                error,
+              )
+            },
+          },
+        )
+
+        logger.info(
+          `[ClaudeSdkAdapter] Proactive supportedCommands for ${sessionId}: ${commands.length}, sample: ${JSON.stringify(commands.slice(0, 2))}`,
+        )
+        this.emit('session-init-data', sessionId, {
+          model: '',
+          tools: [],
+          mcpServers: [],
+          skills: commands,
+          plugins: [],
+        })
+      } catch (error) {
+        logger.warn(`[ClaudeSdkAdapter] supportedCommands() retry failed for ${sessionId}:`, error)
+      }
     }, 2000)
+
+    this.trackSessionTimer(sessionId, bootstrapTimer)
   }
 
   private emitEvent(sessionId: string, event: ProviderEvent): void {

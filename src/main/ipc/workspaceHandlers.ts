@@ -11,6 +11,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { IPC } from '../../shared/constants'
 import { GitWorktreeService } from '../git/GitWorktreeService'
 import type { IpcDependencies } from './index'
+import { failInternalResult, failResult, IPC_ERROR_CODES } from './errorResult'
 
 function normalizePrimaryFlags<T extends { isPrimary: boolean }>(repos: T[]): T[] {
   let primaryFound = false
@@ -22,6 +23,15 @@ function normalizePrimaryFlags<T extends { isPrimary: boolean }>(repos: T[]): T[
     }
     return { ...repo, isPrimary: false }
   })
+}
+
+async function pathExists(targetPath: string): Promise<boolean> {
+  try {
+    await fs.promises.access(targetPath)
+    return true
+  } catch {
+    return false
+  }
 }
 
 export function registerWorkspaceHandlers(deps: IpcDependencies): void {
@@ -57,17 +67,17 @@ export function registerWorkspaceHandlers(deps: IpcDependencies): void {
   }) => {
     try {
       if (!data.name?.trim()) {
-        return { success: false, error: '工作区名称不能为空' }
+        return failResult(IPC_ERROR_CODES.INVALID_ARGUMENT, '工作区名称不能为空')
       }
       if (!data.repos || data.repos.length === 0) {
-        return { success: false, error: '至少需要添加一个仓库' }
+        return failResult(IPC_ERROR_CODES.INVALID_ARGUMENT, '至少需要添加一个仓库')
       }
 
       // 验证所有仓库路径均为有效 git 仓库
       for (const repo of data.repos) {
         const valid = await gitService.isGitRepo(repo.repoPath)
         if (!valid) {
-          return { success: false, error: `路径不是 git 仓库: ${repo.repoPath}` }
+          return failResult(IPC_ERROR_CODES.NOT_GIT_REPO, `路径不是 git 仓库: ${repo.repoPath}`)
         }
       }
 
@@ -96,7 +106,7 @@ export function registerWorkspaceHandlers(deps: IpcDependencies): void {
       return { success: true, workspaceId }
     } catch (error: any) {
       console.error('[IPC] WORKSPACE_CREATE error:', error)
-      return { success: false, error: error.message }
+      return failInternalResult(error)
     }
   })
 
@@ -110,7 +120,7 @@ export function registerWorkspaceHandlers(deps: IpcDependencies): void {
     try {
       const existing = database.getWorkspace(workspaceId)
       if (!existing) {
-        return { success: false, error: '工作区不存在' }
+        return failResult(IPC_ERROR_CODES.NOT_FOUND, '工作区不存在')
       }
 
       // 若有仓库更新，验证路径合法性
@@ -119,7 +129,7 @@ export function registerWorkspaceHandlers(deps: IpcDependencies): void {
         for (const repo of normalizedRepos) {
           const valid = await gitService.isGitRepo(repo.repoPath)
           if (!valid) {
-            return { success: false, error: `路径不是 git 仓库: ${repo.repoPath}` }
+            return failResult(IPC_ERROR_CODES.NOT_GIT_REPO, `路径不是 git 仓库: ${repo.repoPath}`)
           }
         }
       }
@@ -141,7 +151,7 @@ export function registerWorkspaceHandlers(deps: IpcDependencies): void {
       return { success: true }
     } catch (error: any) {
       console.error('[IPC] WORKSPACE_UPDATE error:', error)
-      return { success: false, error: error.message }
+      return failInternalResult(error)
     }
   })
 
@@ -150,24 +160,24 @@ export function registerWorkspaceHandlers(deps: IpcDependencies): void {
     try {
       const existing = database.getWorkspace(workspaceId)
       if (!existing) {
-        return { success: false, error: '工作区不存在' }
+        return failResult(IPC_ERROR_CODES.NOT_FOUND, '工作区不存在')
       }
       database.deleteWorkspace(workspaceId)
       return { success: true }
     } catch (error: any) {
       console.error('[IPC] WORKSPACE_DELETE error:', error)
-      return { success: false, error: error.message }
+      return failInternalResult(error)
     }
   })
 
   // ---- 扫描目录，发现子 git 仓库 ----
   ipcMain.handle(IPC.WORKSPACE_SCAN_REPOS, async (_event, dirPath: string) => {
     try {
-      if (!fs.existsSync(dirPath)) {
-        return { success: false, error: '目录不存在', repos: [] }
+      if (!await pathExists(dirPath)) {
+        return failResult(IPC_ERROR_CODES.PATH_NOT_FOUND, '目录不存在', { repos: [] as Array<{ repoPath: string; name: string }> })
       }
 
-      const entries = fs.readdirSync(dirPath, { withFileTypes: true })
+      const entries = await fs.promises.readdir(dirPath, { withFileTypes: true })
       const results: Array<{ repoPath: string; name: string }> = []
 
       for (const entry of entries) {
@@ -188,18 +198,18 @@ export function registerWorkspaceHandlers(deps: IpcDependencies): void {
       return { success: true, repos: results }
     } catch (error: any) {
       console.error('[IPC] WORKSPACE_SCAN_REPOS error:', error)
-      return { success: false, error: error.message, repos: [] }
+      return failInternalResult(error, { repos: [] as Array<{ repoPath: string; name: string }> })
     }
   })
 
   // ---- 导入 VS Code .code-workspace 文件 ----
   ipcMain.handle(IPC.WORKSPACE_IMPORT_VSCODE, async (_event, filePath: string) => {
     try {
-      if (!fs.existsSync(filePath)) {
-        return { success: false, error: '文件不存在', repos: [] }
+      if (!await pathExists(filePath)) {
+        return failResult(IPC_ERROR_CODES.PATH_NOT_FOUND, '文件不存在', { repos: [] as Array<{ repoPath: string; name: string }> })
       }
 
-      const raw = fs.readFileSync(filePath, 'utf-8')
+      const raw = await fs.promises.readFile(filePath, 'utf-8')
       // .code-workspace 文件可能有 JSON 注释（JSONC 格式），需要容错
       // 使用逐字符解析，避免盲目正则误删字符串内的 //（如 URL）
       let parsed: any
@@ -231,7 +241,7 @@ export function registerWorkspaceHandlers(deps: IpcDependencies): void {
       }
 
       if (!parsed.folders || !Array.isArray(parsed.folders)) {
-        return { success: false, error: '无效的 .code-workspace 文件（缺少 folders 字段）', repos: [] }
+        return failResult(IPC_ERROR_CODES.INVALID_ARGUMENT, '无效的 .code-workspace 文件（缺少 folders 字段）', { repos: [] as Array<{ repoPath: string; name: string }> })
       }
 
       const workspaceDir = path.dirname(filePath)
@@ -245,13 +255,13 @@ export function registerWorkspaceHandlers(deps: IpcDependencies): void {
           : path.resolve(workspaceDir, folder.path)
 
         const name = folder.name || path.basename(resolvedPath)
-        if (fs.existsSync(resolvedPath)) {
+        if (await pathExists(resolvedPath)) {
           repos.push({ repoPath: resolvedPath, name })
         }
       }
 
       if (repos.length === 0) {
-        return { success: false, error: '未找到有效的仓库路径', repos: [] }
+        return failResult(IPC_ERROR_CODES.NOT_FOUND, '未找到有效的仓库路径', { repos: [] as Array<{ repoPath: string; name: string }> })
       }
 
       // 推荐工作区名称（取文件名去后缀）
@@ -259,7 +269,7 @@ export function registerWorkspaceHandlers(deps: IpcDependencies): void {
       return { success: true, repos, suggestedName }
     } catch (error: any) {
       console.error('[IPC] WORKSPACE_IMPORT_VSCODE error:', error)
-      return { success: false, error: error.message, repos: [] }
+      return failInternalResult(error, { repos: [] as Array<{ repoPath: string; name: string }> })
     }
   })
 }

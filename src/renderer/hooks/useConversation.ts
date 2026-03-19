@@ -9,6 +9,7 @@
 
 import { useEffect, useCallback, useRef } from 'react'
 import { useSessionStore } from '../stores/sessionStore'
+import { ensureIpcSuccess, extractIpcErrorMessage } from '../utils/ipcError'
 
 export interface QueuedMessage {
   id: string
@@ -110,10 +111,8 @@ export function useConversation(sessionId: string): UseConversationReturn {
 
     let wasScheduled = false
     try {
-      const result = await window.spectrAI.session.sendMessage(targetSessionId, text)
-      if (result && typeof result === 'object' && 'success' in result && !(result as any).success) {
-        throw new Error((result as any).error || 'Failed to send message')
-      }
+      const rawResult = await window.spectrAI.session.sendMessage(targetSessionId, text)
+      const result = ensureIpcSuccess(rawResult, '消息发送失败')
       if (result && typeof result === 'object' && 'dispatch' in result) {
         const dispatch = (result as any).dispatch as MessageDispatchResult
         wasScheduled = dispatch.scheduled
@@ -121,8 +120,9 @@ export function useConversation(sessionId: string): UseConversationReturn {
       }
       return undefined
     } catch (err) {
-      console.error('[useConversation] Failed to send message:', err)
-      return undefined
+      const message = extractIpcErrorMessage(err, '消息发送失败')
+      console.error('[useConversation] Failed to send message:', message)
+      throw new Error(message)
     } finally {
       // 消息被排队时，会话仍在运行中，streaming 状态由 sessionStore 的
       // onStatusChange 监听器维护，这里不应清除，否则会导致停止按钮闪消
@@ -139,36 +139,40 @@ export function useConversation(sessionId: string): UseConversationReturn {
   // 响应权限请求
   const respondPermission = useCallback(async (accept: boolean) => {
     try {
-      await window.spectrAI.session.respondPermission(sessionIdRef.current, accept)
+      const result = await window.spectrAI.session.respondPermission(sessionIdRef.current, accept)
+      ensureIpcSuccess(result, '权限响应失败')
     } catch (err) {
-      console.error('[useConversation] Failed to respond permission:', err)
+      console.error('[useConversation] Failed to respond permission:', extractIpcErrorMessage(err, '权限响应失败'))
     }
   }, [])
 
   // 回答 AskUserQuestion 问题
   const respondQuestion = useCallback(async (answers: Record<string, string>) => {
     try {
-      await window.spectrAI.session.answerQuestion(sessionIdRef.current, answers)
+      const result = await window.spectrAI.session.answerQuestion(sessionIdRef.current, answers)
+      ensureIpcSuccess(result, '问题回答失败')
     } catch (err) {
-      console.error('[useConversation] Failed to answer question:', err)
+      console.error('[useConversation] Failed to answer question:', extractIpcErrorMessage(err, '问题回答失败'))
     }
   }, [])
 
   // 审批 ExitPlanMode 计划
   const approvePlan = useCallback(async (approved: boolean) => {
     try {
-      await window.spectrAI.session.approvePlan(sessionIdRef.current, approved)
+      const result = await window.spectrAI.session.approvePlan(sessionIdRef.current, approved)
+      ensureIpcSuccess(result, '计划审批失败')
     } catch (err) {
-      console.error('[useConversation] Failed to approve plan:', err)
+      console.error('[useConversation] Failed to approve plan:', extractIpcErrorMessage(err, '计划审批失败'))
     }
   }, [])
 
   // 软中断：停止当前正在执行的 AI 轮次
   const abortSession = useCallback(async () => {
     try {
-      await window.spectrAI.session.abortSession(sessionIdRef.current)
+      const result = await window.spectrAI.session.abortSession(sessionIdRef.current)
+      ensureIpcSuccess(result, '停止会话失败')
     } catch (err) {
-      console.error('[useConversation] Failed to abort session:', err)
+      console.error('[useConversation] Failed to abort session:', extractIpcErrorMessage(err, '停止会话失败'))
     }
   }, [])
 

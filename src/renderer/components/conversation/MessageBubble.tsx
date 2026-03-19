@@ -17,7 +17,7 @@ import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeHighlight from 'rehype-highlight'
 import type { Components } from 'react-markdown'
-import { Copy, FileText, Cpu, Zap } from 'lucide-react'
+import { Copy, FileText, Cpu, Zap, AlertTriangle } from 'lucide-react'
 import type { ConversationMessage } from '../../../shared/types'
 import { parseMessageContentWithImages } from '../../../shared/utils/messageContent'
 import ToolUseCard from './ToolUseCard'
@@ -113,6 +113,33 @@ const remarkPlugins = [remarkGfm]
 
 /** rehype 插件列表 */
 const rehypePlugins = [rehypeHighlight]
+
+class MarkdownRenderBoundary extends React.Component<
+  { markdownText: string; fallback: React.ReactNode; children: React.ReactNode },
+  { hasError: boolean }
+> {
+  constructor(props: { markdownText: string; fallback: React.ReactNode; children: React.ReactNode }) {
+    super(props)
+    this.state = { hasError: false }
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true }
+  }
+
+  componentDidUpdate(prevProps: { markdownText: string }) {
+    if (prevProps.markdownText !== this.props.markdownText && this.state.hasError) {
+      this.setState({ hasError: false })
+    }
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return this.props.fallback
+    }
+    return this.props.children
+  }
+}
 
 function resolveImagePaths(message: ConversationMessage): string[] {
   const paths: string[] = []
@@ -216,6 +243,18 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, isStreaming }) =
   }
   const parsedContent = parseMessageContentWithImages(content || '')
   const imagePaths = resolveImagePaths(message)
+  const textContent = parsedContent.textContent || ''
+  const hasRenderableBody = textContent.trim().length > 0 || imagePaths.length > 0
+
+  const markdownFallback = (
+    <div className="space-y-2">
+      <div className="flex items-start gap-2 px-3 py-2 rounded border border-yellow-500/30 bg-yellow-500/5 text-xs text-text-secondary">
+        <AlertTriangle className="w-3.5 h-3.5 text-yellow-500 mt-0.5 flex-shrink-0" />
+        <span>内容渲染失败，已切换为纯文本</span>
+      </div>
+      <div className="whitespace-pre-wrap break-words font-mono text-[13px] leading-relaxed">{textContent}</div>
+    </div>
+  )
 
   /** 根据消息角色构建右键菜单项 */
   const menuItems: MenuItem[] = isUser
@@ -277,24 +316,43 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, isStreaming }) =
           {thinkingText && <ThinkingBlock text={thinkingText} />}
 
           {/* 主要内容 */}
-          {parsedContent.textContent && (
-            isUser ? (
-              // user 消息：纯文本渲染
-              <div className="whitespace-pre-wrap break-words font-mono text-[13px] leading-relaxed">
-                {parsedContent.textContent}
-              </div>
-            ) : (
-              // assistant 消息：流式草稿降级纯文本，完成后 Markdown 渲染
-              <div className={isStreamingDraft ? "whitespace-pre-wrap break-words text-[13px] leading-relaxed font-mono" : "markdown-body text-[13px] leading-relaxed"}>
-                {isStreamingDraft ? parsedContent.textContent : (
-                  <Markdown
-                    remarkPlugins={remarkPlugins}
-                    rehypePlugins={rehypePlugins}
-                    components={markdownComponents}
+          {hasRenderableBody ? (
+            textContent ? (
+              isUser ? (
+                <div className="whitespace-pre-wrap break-words font-mono text-[13px] leading-relaxed">
+                  {textContent}
+                </div>
+              ) : (
+                <div className={isStreamingDraft ? 'whitespace-pre-wrap break-words text-[13px] leading-relaxed font-mono' : 'markdown-body text-[13px] leading-relaxed'}>
+                  {isStreamingDraft ? textContent : (
+                    <MarkdownRenderBoundary markdownText={textContent} fallback={markdownFallback}>
+                      <Markdown
+                        remarkPlugins={remarkPlugins}
+                        rehypePlugins={rehypePlugins}
+                        components={markdownComponents}
+                      >
+                        {textContent}
+                      </Markdown>
+                    </MarkdownRenderBoundary>
+                  )}
+                </div>
+              )
+            ) : null
+          ) : (
+            !isUser && (
+              <div className="space-y-2">
+                <div className="px-3 py-2 rounded border border-border bg-bg-tertiary text-xs text-text-muted">
+                  模型未返回可显示内容
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => navigator.clipboard.writeText(content || '')}
+                    className="px-2 py-1 text-[11px] rounded border border-border text-text-secondary hover:text-text-primary hover:bg-bg-hover btn-transition"
                   >
-                    {parsedContent.textContent}
-                  </Markdown>
-                )}
+                    复制原始消息
+                  </button>
+                </div>
               </div>
             )
           )}

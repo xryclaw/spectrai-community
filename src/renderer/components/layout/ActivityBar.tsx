@@ -11,7 +11,7 @@
  */
 
 import { useState, useEffect } from 'react'
-import { Bot, FolderTree, GitBranch, BarChart2, Settings, Activity, PieChart, Plug, Zap } from 'lucide-react'
+import { Bot, FolderTree, GitBranch, BarChart2, Settings, Activity, PieChart, Plug, Zap, Users } from 'lucide-react'
 import type { PanelId, PanelSide } from '../../stores/uiStore'
 import { useUIStore } from '../../stores/uiStore'
 
@@ -217,6 +217,25 @@ export default function ActivityBar({ onOpenSettings }: ActivityBarProps) {
 
       {/* 分隔线 */}
       <div className="w-6 border-t border-border mb-1" />
+
+      {/* Team 按钮（固定底部） */}
+      <div className="px-1 w-full">
+        <button
+          title="团队协作"
+          onClick={() => setActivePanelLeft('teams' as PanelId)}
+          className={[
+            'relative w-full h-9 flex items-center justify-center rounded-md transition-colors',
+            activePanelLeft === ('teams' as PanelId)
+              ? 'text-accent-blue bg-bg-hover'
+              : 'text-text-muted hover:text-text-secondary hover:bg-bg-hover cursor-pointer',
+          ].join(' ')}
+        >
+          {activePanelLeft === ('teams' as PanelId) && (
+            <span className="absolute top-1.5 bottom-1.5 left-0 w-0.5 bg-accent-blue rounded-r" />
+          )}
+          <Users className="w-4 h-4" />
+        </button>
+      </div>
 
       {/* 设置按钮（固定底部，直接触发弹窗） */}
       <div className="px-1 w-full">

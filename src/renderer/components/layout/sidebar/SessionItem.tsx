@@ -3,8 +3,9 @@
  * @author weibin
  */
 import React, { useState, useEffect, useRef, useCallback } from 'react'
-import { FolderOpen, AlertCircle, RotateCcw, GitBranch, ChevronDown, Cpu, X, FilePlus, FileEdit, FileX, Loader2 } from 'lucide-react'
+import { FolderOpen, AlertCircle, RotateCcw, GitBranch, ChevronDown, Cpu, X, FilePlus, FileEdit, FileX, Loader2, Users } from 'lucide-react'
 import { useSessionStore } from '../../../stores/sessionStore'
+import { useTeamStore } from '../../../stores/teamStore'
 import { STATUS_COLORS } from '../../../../shared/constants'
 import { STATUS_LABELS, AGENT_STATUS_COLORS } from './types'
 import type { SessionItemProps } from './types'
@@ -183,11 +184,12 @@ export const AgentSubList = React.memo(function AgentSubList({ sessionId, agents
 }) {
   // Bug 2 fix: 排除团队成员会话（name 含 [Team: 前缀），它们不应出现在普通 Agent 子列表中
   const sessionAgents = (agents[sessionId] || []).filter((a: any) => !a.name?.includes('[Team:'))
-  if (sessionAgents.length === 0) return null
 
   const [expandOverride, setExpandOverride] = useState<boolean | null>(null)
   const hasRunning = sessionAgents.some((a: any) => a.status === 'running' || a.status === 'pending')
   const isExpanded = expandOverride !== null ? expandOverride : hasRunning
+
+  if (sessionAgents.length === 0) return null
 
   return (
     <div className="ml-4">
@@ -322,7 +324,6 @@ export const WorktreeSubList = React.memo(function WorktreeSubList({
   const baseBranch = session?.config?.worktreeBaseBranch || ''
   // worktree 分支的 commit hash（合并+cleanup 后分支已删除，但 commit hash 仍在 git 对象库中）
   const worktreeBranchCommit = session?.config?.worktreeBranchCommit || ''
-  if (!worktreePath) return null
 
   const branch = session?.config?.worktreeBranch || 'worktree'
   // 从 worktree/xxx 中提取短名
@@ -415,6 +416,8 @@ export const WorktreeSubList = React.memo(function WorktreeSubList({
   }, [repoPath, baseCommit, baseBranch, diffSummary])
 
   const totalFiles = diffSummary ? diffSummary.files?.length || 0 : 0
+
+  if (!worktreePath) return null
 
   return (
     <div className="ml-4 mt-0.5 w-[calc(100%-1rem)]">

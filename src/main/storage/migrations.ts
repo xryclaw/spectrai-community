@@ -618,4 +618,111 @@ export const MIGRATIONS: Migration[] = [
       tx()
     },
   },
+  {
+    version: 33,
+    description: 'create team workflow tables',
+    up(db: any) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS team_workflows (
+          workflow_id TEXT PRIMARY KEY,
+          session_id  TEXT NOT NULL,
+          goal        TEXT NOT NULL,
+          phase       TEXT NOT NULL DEFAULT 'brainstorming',
+          approved    INTEGER NOT NULL DEFAULT 0,
+          plan_content TEXT,
+          version     INTEGER NOT NULL DEFAULT 0,
+          created_at  TEXT NOT NULL,
+          updated_at  TEXT NOT NULL
+        )
+      `)
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS team_workflow_steps (
+          step_id     TEXT PRIMARY KEY,
+          workflow_id TEXT NOT NULL,
+          title       TEXT NOT NULL,
+          owner_role  TEXT,
+          status      TEXT NOT NULL DEFAULT 'pending',
+          depends_on  TEXT,
+          evidence    TEXT,
+          created_at  TEXT NOT NULL,
+          updated_at  TEXT NOT NULL,
+          FOREIGN KEY (workflow_id) REFERENCES team_workflows(workflow_id)
+        )
+      `)
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS team_workflow_events (
+          event_id    TEXT PRIMARY KEY,
+          workflow_id TEXT NOT NULL,
+          type        TEXT NOT NULL,
+          payload     TEXT,
+          created_at  TEXT NOT NULL,
+          FOREIGN KEY (workflow_id) REFERENCES team_workflows(workflow_id)
+        )
+      `)
+      db.exec('CREATE INDEX IF NOT EXISTS idx_team_workflows_session ON team_workflows(session_id)')
+      db.exec('CREATE INDEX IF NOT EXISTS idx_team_workflow_steps_workflow ON team_workflow_steps(workflow_id)')
+      db.exec('CREATE INDEX IF NOT EXISTS idx_team_workflow_events_workflow ON team_workflow_events(workflow_id)')
+    },
+  },
+
+  // ── v34: team agent 表 ──
+  {
+    version: 34,
+    description: 'create team_templates, team_instances, team_instance_members, team_messages tables',
+    up(db: any) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS team_templates (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          description TEXT DEFAULT '',
+          members TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        )
+      `)
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS team_instances (
+          id TEXT PRIMARY KEY,
+          template_id TEXT NOT NULL,
+          name TEXT NOT NULL,
+          working_directory TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'idle',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          completed_at TEXT
+        )
+      `)
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS team_instance_members (
+          id TEXT PRIMARY KEY,
+          team_instance_id TEXT NOT NULL,
+          role TEXT NOT NULL,
+          name TEXT NOT NULL,
+          system_prompt TEXT DEFAULT '',
+          provider_id TEXT NOT NULL DEFAULT 'claude-code',
+          mode TEXT NOT NULL DEFAULT 'member',
+          status TEXT NOT NULL DEFAULT 'idle',
+          agent_id TEXT,
+          session_id TEXT,
+          current_task TEXT,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY (team_instance_id) REFERENCES team_instances(id) ON DELETE CASCADE
+        )
+      `)
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS team_messages (
+          id TEXT PRIMARY KEY,
+          team_instance_id TEXT NOT NULL,
+          role TEXT NOT NULL,
+          member_name TEXT,
+          member_role TEXT,
+          content TEXT NOT NULL,
+          timestamp TEXT NOT NULL,
+          FOREIGN KEY (team_instance_id) REFERENCES team_instances(id) ON DELETE CASCADE
+        )
+      `)
+      db.exec('CREATE INDEX IF NOT EXISTS idx_team_instance_members_instance ON team_instance_members(team_instance_id)')
+      db.exec('CREATE INDEX IF NOT EXISTS idx_team_messages_instance ON team_messages(team_instance_id, timestamp)')
+    },
+  },
 ]

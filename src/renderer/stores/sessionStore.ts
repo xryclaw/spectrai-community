@@ -12,6 +12,7 @@ import type {
   ConversationMessage
 } from '../../shared/types'
 import { sanitizeDisplayText } from '../utils/textSanitizer'
+import { ensureIpcSuccess, extractIpcErrorMessage } from '../utils/ipcError'
 
 /** Agent 信息（从主进程同步） */
 interface AgentInfo {
@@ -383,10 +384,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   // 终止会话
   terminateSession: async (id: string) => {
     try {
-      await window.spectrAI.session.terminate(id)
+      const result = await window.spectrAI.session.terminate(id)
+      ensureIpcSuccess(result, '终止会话失败')
       await get().fetchSessions()
     } catch (error) {
-      console.error('Failed to terminate session:', error)
+      console.error('Failed to terminate session:', extractIpcErrorMessage(error, '终止会话失败'))
       throw error
     }
   },
@@ -419,9 +421,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   // 发送输入
   sendInput: async (id: string, data: string) => {
     try {
-      await window.spectrAI.session.sendInput(id, data)
+      const result = await window.spectrAI.session.sendInput(id, data)
+      ensureIpcSuccess(result, '发送输入失败')
     } catch (error) {
-      console.error('Failed to send input:', error)
+      console.error('Failed to send input:', extractIpcErrorMessage(error, '发送输入失败'))
       throw error
     }
   },
@@ -772,9 +775,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   // SDK V2: 发送结构化消息
   sendMessage: async (sessionId: string, text: string) => {
     try {
-      await window.spectrAI.session.sendMessage(sessionId, text)
+      const result = await window.spectrAI.session.sendMessage(sessionId, text)
+      ensureIpcSuccess(result, '消息发送失败')
     } catch (error) {
-      console.error('Failed to send message:', error)
+      console.error('Failed to send message:', extractIpcErrorMessage(error, '消息发送失败'))
       throw error
     }
   },
@@ -795,7 +799,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
     // ③ 发送展开后的模板
     try {
-      await window.spectrAI.session.sendMessage(sessionId, expandedTemplate)
+      const result = await window.spectrAI.session.sendMessage(sessionId, expandedTemplate)
+      ensureIpcSuccess(result, 'Skill 消息发送失败')
     } catch (error) {
       // 发送失败时撤销标记，避免屏蔽后续正常消息
       set(state => {
@@ -803,7 +808,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         next.delete(sessionId)
         return { suppressNextEcho: next }
       })
-      console.error('sendSkillMessage failed:', error)
+      console.error('sendSkillMessage failed:', extractIpcErrorMessage(error, 'Skill 消息发送失败'))
       throw error
     }
   },

@@ -13,6 +13,20 @@ export interface SpectrAIAPI {
     updateTitleBar: (themeId: string) => void
   }
 
+  settings: {
+    getAll: () => Promise<Record<string, any>>
+    update: (key: string, value: any) => Promise<{ success: boolean; error?: string }>
+  }
+
+  fs: {
+    saveImageToTemp: (base64Data: string, mimeType: string) => Promise<string>
+  }
+
+  log: {
+    getRecent: (lines?: number) => Promise<string[]>
+    openFile: () => Promise<void>
+  }
+
   update: {
     getState: () => Promise<{
       status: 'idle' | 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error'
@@ -70,9 +84,10 @@ export interface SpectrAIAPI {
     onActivity: (callback: (sessionId: string, activity: any) => void) => () => void
     onIntervention: (callback: (sessionId: string, intervention: any) => void) => () => void
     onNameChange: (callback: (sessionId: string, name: string) => void) => () => void
+    onRefresh: (callback: () => void) => () => void
 
     // SDK V2 扩展方法
-    sendMessage?: (sessionId: string, text: string) => Promise<{
+    sendMessage: (sessionId: string, text: string) => Promise<{
       success: boolean
       error?: string
       dispatch?: {
@@ -83,15 +98,15 @@ export interface SpectrAIAPI {
         reason?: 'session_starting' | 'session_running'
       }
     }>
-    getConversation?: (sessionId: string) => Promise<any[]>
-    abortSession?: (sessionId: string) => Promise<{ success: boolean; error?: string }>
-    respondPermission?: (sessionId: string, accept: boolean) => Promise<{ success: boolean; error?: string }>
-    answerQuestion?: (sessionId: string, answers: Record<string, string>) => Promise<{ success: boolean; error?: string }>
-    approvePlan?: (sessionId: string, approved: boolean) => Promise<{ success: boolean; error?: string }>
-    getQueue?: (sessionId: string) => Promise<{ success: boolean; messages?: Array<{ id: string; text: string; queuedAt: string; strategy?: string }>; error?: string }>
-    clearQueue?: (sessionId: string) => Promise<{ success: boolean; cleared?: number; error?: string }>
-    onConversationMessage?: (callback: (sessionId: string, msg: any) => void) => () => void
-    onInitData?: (callback: (sessionId: string, data: any) => void) => () => void
+    getConversation: (sessionId: string) => Promise<any[]>
+    abortSession: (sessionId: string) => Promise<{ success: boolean; error?: string }>
+    respondPermission: (sessionId: string, accept: boolean) => Promise<{ success: boolean; error?: string }>
+    answerQuestion: (sessionId: string, answers: Record<string, string>) => Promise<{ success: boolean; error?: string }>
+    approvePlan: (sessionId: string, approved: boolean) => Promise<{ success: boolean; error?: string }>
+    getQueue: (sessionId: string) => Promise<{ success: boolean; messages?: Array<{ id: string; text: string; queuedAt: string; strategy?: string }>; error?: string }>
+    clearQueue: (sessionId: string) => Promise<{ success: boolean; cleared?: number; error?: string }>
+    onConversationMessage: (callback: (sessionId: string, msg: any) => void) => () => void
+    onInitData: (callback: (sessionId: string, data: any) => void) => () => void
     onTokenUpdate?: (callback: (sessionId: string, usage: any) => void) => () => void
   }
 
@@ -111,6 +126,7 @@ export interface SpectrAIAPI {
     create: (provider: any) => Promise<{ success: boolean; provider?: any; error?: string }>
     update: (id: string, updates: any) => Promise<{ success: boolean; error?: string }>
     delete: (id: string) => Promise<{ success: boolean; error?: string }>
+    reorder: (orderedIds: string[]) => Promise<{ success: boolean; error?: string }>
     /** 检测 CLI 命令是否已安装，返回安装路径 */
     checkCli: (command: string) => Promise<{ found: boolean; path: string | null }>
     /** 测试 Claude Code 可执行文件（cli.js）是否可用，支持自动检测或验证指定路径 */
@@ -163,6 +179,27 @@ export interface SpectrAIAPI {
     totalTokens: number
     sessionBreakdown: Record<string, number>
   }>
+
+  team: {
+    createTemplate: (data: any) => Promise<any>
+    updateTemplate: (id: string, updates: any) => Promise<void>
+    deleteTemplate: (id: string) => Promise<void>
+    getTemplate: (id: string) => Promise<any>
+    getAllTemplates: () => Promise<any[]>
+    createInstance: (data: any) => Promise<any>
+    startInstance: (id: string) => Promise<void>
+    stopInstance: (id: string) => Promise<void>
+    pauseInstance: (id: string) => Promise<void>
+    deleteInstance: (id: string) => Promise<void>
+    getInstance: (id: string) => Promise<any>
+    getAllInstances: () => Promise<any[]>
+    updateMember: (memberId: string, updates: any) => Promise<void>
+    sendMessage: (instanceId: string, text: string) => Promise<void>
+    getMessages: (instanceId: string, limit?: number) => Promise<any[]>
+    onStatusChange: (callback: (instanceId: string, status: string) => void) => () => void
+    onMemberStatusChange: (callback: (instanceId: string, memberId: string, status: string) => void) => () => void
+    onMessage: (callback: (instanceId: string, msg: any) => void) => () => void
+  }
 
   agent: {
     list: (parentSessionId?: string) => Promise<Array<{
