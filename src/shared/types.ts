@@ -972,6 +972,13 @@ export interface TeamInstance {
   workingDirectory: string
   status: TeamInstanceStatus
   members: TeamInstanceMember[]
+  /** 聚合字段：用于团队会话 UI 快速识别 leader 与会话映射（向后兼容，缺省可不依赖） */
+  leaderMemberId?: string
+  leaderSessionId?: string
+  teamSessionId?: string
+  memberCount?: number
+  activeMemberCount?: number
+  memberSessionIds?: string[]
   createdAt: string
   updatedAt: string
   completedAt?: string

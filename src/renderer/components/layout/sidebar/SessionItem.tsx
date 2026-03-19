@@ -29,6 +29,11 @@ export const SessionItem = React.memo(function SessionItem({
   const runningAgentCount = useSessionStore(s =>
     (s.agents[session.id] || []).filter((a: any) => a.status === 'running' || a.status === 'pending').length
   )
+  const teamInstance = useTeamStore((s) => s.getTeamForSession(session.id))
+  const teamLeader = teamInstance?.members?.find((member) => member.role === 'leader')
+  const isTeamSession = !!teamInstance && (!teamLeader?.sessionId || teamLeader.sessionId === session.id)
+  const teamMemberCount = teamInstance?.members?.length || 0
+
   const isInterrupted = session.status === 'interrupted'
   const needsAttention = session.status === 'waiting_input' || session.status === 'error'
   const isStuck = !!stuckType
@@ -137,6 +142,15 @@ export const SessionItem = React.memo(function SessionItem({
           </span>
         )}
         <div className="flex items-center gap-1 ml-2 flex-shrink-0">
+          {isTeamSession && (
+            <span
+              className="inline-flex items-center gap-1 px-1 py-0.5 rounded text-[9px] font-medium bg-accent-blue/15 text-accent-blue leading-none flex-shrink-0"
+              title={`团队会话 · ${teamMemberCount} 名成员`}
+            >
+              <Users className="w-2.5 h-2.5" />
+              {teamMemberCount}
+            </span>
+          )}
           {runningAgentCount > 0 && (
             <span className="px-1 py-0.5 rounded text-[9px] font-medium bg-accent-green/15 text-accent-green leading-none flex-shrink-0">
               ↳{runningAgentCount}运行

@@ -1,7 +1,7 @@
 # Team Agent UI 重构计划
 
 > 日期: 2026-03-19
-> 状态: 实施中（Step 1-5 已完成，Step 6-7 进行中）
+> 状态: 实施中（代码 Step 1-5 已完成，Step 6-7 待前端补齐；交互与文案终稿已完成）
 
 ## Context
 
@@ -100,3 +100,10 @@ Team Agent 的后端（types、IPC、DB、TeamOrchestrator、preload bridge、te
 | `src/renderer/components/layout/sidebar/SessionItem.tsx` | 修改 — 团队 session 特殊标识 | 🔄 |
 
 共修改 5 个现有文件，新建 1 个文件。后端无需改动。
+
+## 交互与文案终稿（2026-03-19）
+
+可直接开发的交互稿、状态覆盖矩阵、空态/异常态/加载态与文案键值映射，见：
+
+`docs/plans/2026-03-19-team-agent-ui-interaction-copy-final.md`
+

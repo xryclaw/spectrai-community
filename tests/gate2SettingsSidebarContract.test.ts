@@ -27,6 +27,7 @@ test('sidebar should keep child view routing contract consistent', () => {
     "case 'stats':",
     "case 'mcp':",
     "case 'skills':",
+    "case 'teams':",
     "case 'sessions':",
   ]
 
@@ -34,7 +35,7 @@ test('sidebar should keep child view routing contract consistent', () => {
     assert.match(sidebar, new RegExp(mark.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
   }
 
-  assert.match(sidebar, /default:[\s\S]*return <SessionsContent \/>/)
+  assert.match(sidebar, /default:[\s\S]*return <SessionsPanelWrapper \/>/)
 })
 
 test('sidebar subviews should dispatch open-settings-tab with stable tab keys', () => {

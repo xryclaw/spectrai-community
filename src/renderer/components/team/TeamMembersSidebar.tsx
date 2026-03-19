@@ -4,26 +4,30 @@
  */
 
 import React from 'react'
-import { ArrowLeft, Shield, Star, Code2, Search, Bug, Users, Square, Edit3 } from 'lucide-react'
-import type { TeamInstance, TeamInstanceMember, TeamRole, TeamMemberStatus } from '../../../shared/types'
+import { ArrowLeft, Shield, Star, Code2, Search, Bug, Users, Square } from 'lucide-react'
+import type { TeamInstance, TeamInstanceMember, TeamRole, TeamMemberStatus, TeamInstanceStatus } from '../../../shared/types'
 import { useTeamStore } from '../../stores/teamStore'
 
-const STATUS_COLORS: Record<TeamMemberStatus, string> = {
-  idle: '#8B949E',
-  working: '#3FB950',
-  reviewing: '#58A6FF',
-  blocked: '#D29922',
-  done: '#58A6FF',
-  error: '#F85149'
+type TeamUiAction = 'sidebar_back' | 'select_team_conversation' | 'select_member' | 'stop_team'
+
+function emitTeamUiEvent(action: TeamUiAction, payload: Record<string, unknown>) {
+  window.dispatchEvent(new CustomEvent('spectrai:team-ui', {
+    detail: {
+      module: 'team_members_sidebar',
+      action,
+      timestamp: Date.now(),
+      ...payload,
+    },
+  }))
 }
 
-const STATUS_LABELS: Record<TeamMemberStatus, string> = {
-  idle: '空闲',
-  working: '工作中',
-  reviewing: '审核中',
-  blocked: '阻塞',
-  done: '完成',
-  error: '错误'
+const STATUS_META: Record<TeamMemberStatus, { color: string; label: string }> = {
+  idle: { color: '#8B949E', label: '空闲' },
+  working: { color: '#3FB950', label: '工作中' },
+  reviewing: { color: '#58A6FF', label: '审核中' },
+  blocked: { color: '#D29922', label: '阻塞' },
+  done: { color: '#58A6FF', label: '完成' },
+  error: { color: '#F85149', label: '错误' },
 }
 
 const ROLE_ICONS: Record<TeamRole, React.ReactNode> = {
@@ -32,7 +36,7 @@ const ROLE_ICONS: Record<TeamRole, React.ReactNode> = {
   developer: <Code2 size={14} />,
   reviewer: <Search size={14} />,
   qa: <Bug size={14} />,
-  custom: <Users size={14} />
+  custom: <Users size={14} />,
 }
 
 const ROLE_LABELS: Record<TeamRole, string> = {
@@ -41,31 +45,36 @@ const ROLE_LABELS: Record<TeamRole, string> = {
   developer: '开发',
   reviewer: '审核',
   qa: '测试',
-  custom: '自定义'
+  custom: '自定义',
 }
 
-const INSTANCE_STATUS_COLORS: Record<string, string> = {
-  running: '#3FB950',
-  idle: '#8B949E',
-  paused: '#D29922',
-  failed: '#F85149',
-  completed: '#58A6FF'
+const INSTANCE_STATUS_META: Record<TeamInstanceStatus, { color: string; label: string }> = {
+  running: { color: '#3FB950', label: '运行中' },
+  idle: { color: '#8B949E', label: '空闲' },
+  paused: { color: '#D29922', label: '已暂停' },
+  failed: { color: '#F85149', label: '失败' },
+  completed: { color: '#58A6FF', label: '已完成' },
 }
 
 function MemberItem({
   member,
+  instanceId,
   isSelected,
   onSelect,
 }: {
   member: TeamInstanceMember
+  instanceId: string
   isSelected: boolean
   onSelect: () => void
 }) {
-  const statusColor = STATUS_COLORS[member.status]
+  const statusMeta = STATUS_META[member.status] || { color: '#8B949E', label: member.status }
 
   return (
     <button
       onClick={onSelect}
+      data-testid="team-member-item"
+      data-team-instance-id={instanceId}
+      data-team-member-id={member.id}
       className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg btn-transition text-left ${
         isSelected
           ? 'bg-accent-blue/10 border border-accent-blue/30'
@@ -78,14 +87,14 @@ function MemberItem({
           <span className="text-text-primary text-sm truncate">{member.name}</span>
           <span
             className="w-1.5 h-1.5 rounded-full flex-shrink-0"
-            style={{ backgroundColor: statusColor }}
+            style={{ backgroundColor: statusMeta.color }}
           />
         </div>
         <div className="flex items-center gap-1.5 mt-0.5">
           <span className="text-text-muted text-[11px]">{ROLE_LABELS[member.role]}</span>
           <span className="text-text-muted text-[11px]">·</span>
-          <span className="text-[11px]" style={{ color: statusColor }}>
-            {STATUS_LABELS[member.status]}
+          <span className="text-[11px]" style={{ color: statusMeta.color }}>
+            {statusMeta.label}
           </span>
         </div>
         {member.currentTask && (
@@ -104,17 +113,21 @@ export function TeamMembersSidebar({
   onBack: () => void
 }) {
   const { selectedMemberId, selectMember, stopInstance } = useTeamStore()
-  const instanceStatusColor = INSTANCE_STATUS_COLORS[instance.status] || '#8B949E'
+  const instanceStatusMeta = INSTANCE_STATUS_META[instance.status] || { color: '#8B949E', label: instance.status }
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full" data-testid="team-members-sidebar" data-team-instance-id={instance.id}>
       {/* Header */}
       <div className="px-3 py-3 border-b border-border">
         <div className="flex items-center gap-2 mb-2">
           <button
-            onClick={onBack}
+            onClick={() => {
+              emitTeamUiEvent('sidebar_back', { instanceId: instance.id })
+              onBack()
+            }}
             className="text-text-muted hover:text-text-primary btn-transition p-0.5"
             title="返回会话列表"
+            data-testid="team-sidebar-back"
           >
             <ArrowLeft size={14} />
           </button>
@@ -123,7 +136,8 @@ export function TeamMembersSidebar({
           </span>
           <span
             className="w-2 h-2 rounded-full flex-shrink-0"
-            style={{ backgroundColor: instanceStatusColor }}
+            style={{ backgroundColor: instanceStatusMeta.color }}
+            title={instanceStatusMeta.label}
           />
         </div>
         <p className="text-text-muted text-[11px] truncate pl-6">{instance.workingDirectory}</p>
@@ -132,7 +146,11 @@ export function TeamMembersSidebar({
       {/* Team conversation button */}
       <div className="px-3 pt-3 pb-1">
         <button
-          onClick={() => selectMember(null)}
+          onClick={() => {
+            emitTeamUiEvent('select_team_conversation', { instanceId: instance.id })
+            selectMember(null)
+          }}
+          data-testid="team-conversation-button"
           className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg btn-transition text-left ${
             selectedMemberId === null
               ? 'bg-accent-blue/10 border border-accent-blue/30'
@@ -146,28 +164,42 @@ export function TeamMembersSidebar({
 
       {/* Members list */}
       <div className="px-3 pt-2 pb-1">
-        <span className="text-text-muted text-[11px] uppercase tracking-wide">
+        <span className="text-text-muted text-[11px] tracking-wide">
           成员 ({instance.members?.length || 0})
         </span>
       </div>
       <div className="flex-1 overflow-y-auto px-3 pb-3">
-        <div className="space-y-0.5">
-          {(instance.members || []).map((member) => (
-            <MemberItem
-              key={member.id}
-              member={member}
-              isSelected={selectedMemberId === member.id}
-              onSelect={() => selectMember(member.id)}
-            />
-          ))}
-        </div>
+        {!instance.members?.length ? (
+          <div className="text-[12px] text-text-muted px-3 py-2 border border-border rounded-lg">
+            暂无成员
+          </div>
+        ) : (
+          <div className="space-y-0.5">
+            {(instance.members || []).map((member) => (
+              <MemberItem
+                key={member.id}
+                member={member}
+                instanceId={instance.id}
+                isSelected={selectedMemberId === member.id}
+                onSelect={() => {
+                  emitTeamUiEvent('select_member', { instanceId: instance.id, memberId: member.id, memberRole: member.role })
+                  selectMember(member.id)
+                }}
+              />
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Footer actions */}
       {(instance.status === 'running' || instance.status === 'paused') && (
         <div className="px-3 py-2 border-t border-border">
           <button
-            onClick={() => stopInstance(instance.id)}
+            onClick={() => {
+              emitTeamUiEvent('stop_team', { instanceId: instance.id, status: instance.status })
+              stopInstance(instance.id)
+            }}
+            data-testid="team-stop-button"
             className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs text-red-400 hover:text-red-300 hover:bg-red-400/10 rounded-lg btn-transition"
           >
             <Square size={12} />

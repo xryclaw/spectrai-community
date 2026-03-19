@@ -187,7 +187,12 @@ export class TeamRepository {
   getMembersByInstance(instanceId: string): TeamInstanceMember[] {
     if (!this.usingSqlite) return []
     try {
-      const rows = this.db.prepare('SELECT * FROM team_instance_members WHERE team_instance_id = ?').all(instanceId) as any[]
+      const rows = this.db.prepare(
+        `SELECT *
+         FROM team_instance_members
+         WHERE team_instance_id = ?
+         ORDER BY CASE WHEN mode = 'supervisor' THEN 0 ELSE 1 END, updated_at ASC, id ASC`
+      ).all(instanceId) as any[]
       return rows.map(this.mapMember)
     } catch (err) {
       console.warn('[TeamRepository] getMembersByInstance error:', err)
@@ -241,6 +246,19 @@ export class TeamRepository {
   }
 
   private mapInstance(row: any, members: TeamInstanceMember[]): TeamInstance {
+    const memberSessionIds = members
+      .map(m => m.sessionId)
+      .filter((sessionId): sessionId is string => typeof sessionId === 'string' && sessionId.trim().length > 0)
+
+    const leader = members.find(m => m.role === 'leader' && m.sessionId)
+      || members.find(m => m.mode === 'supervisor' && m.sessionId)
+      || members.find(m => m.sessionId)
+      || members.find(m => m.role === 'leader')
+      || members.find(m => m.mode === 'supervisor')
+      || members[0]
+
+    const activeMemberCount = members.filter(m => ['working', 'reviewing', 'blocked'].includes(m.status)).length
+
     return {
       id: row.id,
       templateId: row.template_id,
@@ -248,6 +266,12 @@ export class TeamRepository {
       workingDirectory: row.working_directory,
       status: row.status,
       members,
+      leaderMemberId: leader?.id,
+      leaderSessionId: leader?.sessionId,
+      teamSessionId: leader?.sessionId,
+      memberCount: members.length,
+      activeMemberCount,
+      memberSessionIds,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       completedAt: row.completed_at ?? undefined,

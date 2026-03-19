@@ -14,6 +14,17 @@ import { useSessionStore } from '../../stores/sessionStore'
 import { useTeamStore } from '../../stores/teamStore'
 import { TeamConversation } from '../team/TeamConversation'
 
+function emitTeamPanelUiEvent(action: string, payload: Record<string, unknown>) {
+  window.dispatchEvent(new CustomEvent('spectrai:team-ui', {
+    detail: {
+      module: 'terminal_panel',
+      action,
+      timestamp: Date.now(),
+      ...payload,
+    },
+  }))
+}
+
 interface TerminalPanelProps {
   sessionId: string
   onMaximize?: () => void
@@ -33,6 +44,7 @@ const TerminalPanel: React.FC<TerminalPanelProps> = ({ sessionId, onMaximize, on
   // 团队相关状态
   const teamInstance = useTeamStore(state => state.getTeamForSession(sessionId))
   const selectedMemberId = useTeamStore(state => state.selectedMemberId)
+  const selectMember = useTeamStore(state => state.selectMember)
 
   // 已结束状态（无需确认可直接关闭）
   const INACTIVE_STATUSES = new Set(['completed', 'terminated', 'interrupted', 'error'])
@@ -65,8 +77,22 @@ const TerminalPanel: React.FC<TerminalPanelProps> = ({ sessionId, onMaximize, on
         }
         // 成员还没有 sessionId（未启动），显示提示
         return (
-          <div className="flex-1 flex items-center justify-center text-text-muted text-sm">
-            该成员尚未启动会话
+          <div className="flex-1 flex items-center justify-center">
+            <div className="flex flex-col items-center gap-2 text-text-muted text-sm" data-testid="team-member-session-missing">
+              <span>该成员尚未启动会话</span>
+              <button
+                className="text-xs px-2 py-1 rounded border border-border hover:bg-bg-hover btn-transition"
+                onClick={() => {
+                  emitTeamPanelUiEvent('fallback_to_team_conversation', {
+                    teamInstanceId: teamInstance.id,
+                    selectedMemberId,
+                  })
+                  selectMember(null)
+                }}
+              >
+                返回团队对话
+              </button>
+            </div>
           </div>
         )
       }

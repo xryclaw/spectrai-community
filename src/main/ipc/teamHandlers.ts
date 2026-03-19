@@ -163,9 +163,12 @@ export function registerTeamHandlers(deps: IpcDependencies): void {
     }
   })
 
-  ipcMain.handle(IPC.TEAM_GET_MESSAGES, async (_event, instanceId) => {
+  ipcMain.handle(IPC.TEAM_GET_MESSAGES, async (_event, instanceId, limit?: number) => {
     try {
-      return database.getTeamMessages(instanceId)
+      const resolvedLimit = typeof limit === 'number' && Number.isFinite(limit) && limit > 0
+        ? Math.floor(limit)
+        : undefined
+      return database.getTeamMessages(instanceId, resolvedLimit)
     } catch (error: any) {
       throw new Error(`Failed to get messages: ${error.message}`)
     }
